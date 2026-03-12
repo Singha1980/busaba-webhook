@@ -20,10 +20,13 @@ export default async function handler(req, res) {
       console.log("TEXT:", text);
 
       const botType = detectBotType(text, destination);
-      const replyText =
-        botType === "ISECRETARY"
-          ? await handleISecretaryCommand(text, userId)
-          : await handleBusabaCommand(text, userId);
+
+      let replyText = "";
+      if (botType === "ISECRETARY") {
+        replyText = await handleISecretaryCommand(text, userId);
+      } else {
+        replyText = await handleBusabaCommand(text, userId);
+      }
 
       const accessToken = getAccessTokenByBotType(botType);
       await reply(event.replyToken, replyText, accessToken);
@@ -54,9 +57,9 @@ function detectBotType(text, destination) {
 function getBotTypeByDestination(destination) {
   if (!destination) return "";
 
-  // ภายหลังถ้ารู้ destination ของแต่ละ OA ให้ใส่ตรงนี้เพื่อแยกแม่น 100%
-  // if (destination === "Uxxxxxxxxxxxxxxxxxxxx") return "BUSABA";
-  // if (destination === "Uyyyyyyyyyyyyyyyyyyyy") return "ISECRETARY";
+  // ภายหลังถ้าคุณรู้ destination ของ OA แต่ละตัว ค่อยมาใส่ตรงนี้
+  // if (destination === "Uxxxxxxxxxxxxxxxxxx") return "BUSABA";
+  // if (destination === "Uyyyyyyyyyyyyyyyyyy") return "ISECRETARY";
 
   return "";
 }
@@ -179,10 +182,6 @@ async function handleISecretaryCommand(text, userId) {
   ].join("\n");
 }
 
-/**
- * เรียก Apps Script Web App เพื่อดึงรายงานจาก Google Sheet
- * ต้องตั้งค่า ISECRETARY_REPORT_API_URL ใน Vercel
- */
 async function fetchISecretaryReport(reportType) {
   const apiBase = String(process.env.ISECRETARY_REPORT_API_URL || "").trim();
 
@@ -196,7 +195,7 @@ async function fetchISecretaryReport(reportType) {
 
     console.log("ISECRETARY REPORT URL:", url);
 
-    const response = await fetch(url, { method: "GET" });
+    const response = await fetch(url, { method: "GET", redirect: "follow" });
     const rawText = await response.text();
 
     console.log("ISECRETARY REPORT STATUS:", response.status);
@@ -343,7 +342,7 @@ async function reply(replyToken, text, accessToken) {
     messages: [
       {
         type: "text",
-        text: String(text || "")
+        text: String(text || "").slice(0, 5000)
       }
     ]
   };
