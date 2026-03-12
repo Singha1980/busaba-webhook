@@ -1,6 +1,6 @@
 /*************************************************
  * BUSABA + ISECRETARY WEBHOOK
- * V3.1 NO WEB SEARCH
+ * V3.2 FULL REPLACE
  *************************************************/
 
 export default async function handler(req, res) {
@@ -145,7 +145,6 @@ async function handleBusabaCommand(text, userId) {
 async function handleISecretaryCommand(text, userId) {
   const cmd = normalizeText(text);
 
-  // รายงาน
   if (cmd.includes("งานวันนี้")) return await fetchISecretaryReport("today_tasks");
   if (cmd.includes("งานค้าง")) return await fetchISecretaryReport("overdue_tasks");
   if (cmd.includes("สรุปวันนี้")) return await fetchISecretaryReport("today_summary");
@@ -155,13 +154,11 @@ async function handleISecretaryCommand(text, userId) {
   if (cmd.includes("ด่วน")) return await fetchISecretaryReport("urgent_tasks");
   if (cmd.includes("สถานะงาน")) return await fetchISecretaryReport("task_status_summary");
 
-  // ถ้ามี state ค้างอยู่ ให้จัดการก่อนทุกอย่าง
   const state = await getSecretaryState(userId);
 
   if (state) {
     console.log("FOUND STATE:", JSON.stringify(state));
 
-    // ถ้าตอบสั้น ๆ แค่ domain ให้จับตรงนี้เลย
     const directDomain = mapShortDomainAnswer(text);
     if (directDomain) {
       const mergedDirect = {
@@ -510,16 +507,16 @@ function inferDomainFromTextAndParsed(text, parsed, fallbackDomain) {
   }
 
   if (
+    all.includes("ร้านป้าย") ||
     all.includes("ป้าย") ||
     all.includes("ลูกค้า") ||
     all.includes("ติดตั้ง") ||
-    all.includes("ผลิต") ||
-    all.includes("ร้านป้าย")
+    all.includes("ผลิต")
   ) {
     return "ร้านป้าย";
   }
 
-  return String(parsed?.domain || fallbackDomain || "").trim();
+  return String(fallbackDomain || "").trim();
 }
 
 function mapShortDomainAnswer(text) {
