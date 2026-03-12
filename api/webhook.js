@@ -5,6 +5,7 @@ export default async function handler(req, res) {
 
   try {
     const events = req.body?.events || [];
+    const destination = String(req.body?.destination || "");
 
     for (const event of events) {
       if (event.type !== "message") continue;
@@ -14,11 +15,18 @@ export default async function handler(req, res) {
       const text = String(event.message.text || "").trim();
       const userId = event.source?.userId || "";
 
+      console.log("LINE DESTINATION:", destination);
       console.log("LINE SOURCE:", JSON.stringify(event.source));
       console.log("TEXT:", text);
 
-      const replyText = await handleCommand(text, userId);
-      await reply(event.replyToken, replyText);
+      const botType = detectBotType(text, destination);
+      const replyText =
+        botType === "ISECRETARY"
+          ? await handleISecretaryCommand(text, userId)
+          : await handleBusabaCommand(text, userId);
+
+      const accessToken = getAccessTokenByBotType(botType);
+      await reply(event.replyToken, replyText, accessToken);
     }
 
     return res.status(200).send("OK");
@@ -28,7 +36,59 @@ export default async function handler(req, res) {
   }
 }
 
-async function handleCommand(text, userId) {
+/* =========================================================
+ * BOT ROUTER
+ * ========================================================= */
+
+function detectBotType(text, destination) {
+  const mapped = getBotTypeByDestination(destination);
+  if (mapped) return mapped;
+
+  if (isISecretaryCommandText(text)) {
+    return "ISECRETARY";
+  }
+
+  return "BUSABA";
+}
+
+function getBotTypeByDestination(destination) {
+  if (!destination) return "";
+
+  // ภายหลังถ้ารู้ destination ของแต่ละ OA ให้ใส่ตรงนี้เพื่อแยกแม่น 100%
+  // if (destination === "Uxxxxxxxxxxxxxxxxxxxx") return "BUSABA";
+  // if (destination === "Uyyyyyyyyyyyyyyyyyyyy") return "ISECRETARY";
+
+  return "";
+}
+
+function isISecretaryCommandText(text) {
+  const cmd = normalizeText(text);
+
+  if (cmd.includes("งานวันนี้")) return true;
+  if (cmd.includes("งานค้าง")) return true;
+  if (cmd.includes("สรุปวันนี้")) return true;
+  if (cmd.includes("พรุ่งนี้มีนัดไหม")) return true;
+  if (cmd.includes("พรุ่งนี้มีนัดมั้ย")) return true;
+
+  return false;
+}
+
+function getAccessTokenByBotType(botType) {
+  if (botType === "ISECRETARY") {
+    return String(process.env.LINE_ACCESS_TOKEN_ISECRETARY || "").trim();
+  }
+  return String(process.env.LINE_ACCESS_TOKEN || "").trim();
+}
+
+function normalizeText(text) {
+  return String(text || "").trim().replace(/\s+/g, "");
+}
+
+/* =========================================================
+ * BUSABA COMMANDS
+ * ========================================================= */
+
+async function handleBusabaCommand(text, userId) {
   const lower = text.toLowerCase();
 
   if (text === "เมนู" || lower === "menu") {
@@ -84,6 +144,88 @@ async function handleCommand(text, userId) {
     "- อะคริลิค 50x100"
   ].join("\n");
 }
+
+/* =========================================================
+ * ISECRETARY COMMANDS
+ * ========================================================= */
+
+async function handleISecretaryCommand(text, userId) {
+  const cmd = normalizeText(text);
+
+  if (cmd.includes("งานวันนี้")) {
+    return await fetchISecretaryReport("today_tasks");
+  }
+
+  if (cmd.includes("งานค้าง")) {
+    return await fetchISecretaryReport("overdue_tasks");
+  }
+
+  if (cmd.includes("สรุปวันนี้")) {
+    return await fetchISecretaryReport("today_summary");
+  }
+
+  if (cmd.includes("พรุ่งนี้มีนัดไหม") || cmd.includes("พรุ่งนี้มีนัดมั้ย")) {
+    return await fetchISecretaryReport("tomorrow_appointments");
+  }
+
+  return [
+    "iSecretary",
+    "",
+    "คำสั่งที่ใช้ได้:",
+    "- งานวันนี้",
+    "- งานค้าง",
+    "- สรุปวันนี้",
+    "- พรุ่งนี้มีนัดไหม"
+  ].join("\n");
+}
+
+/**
+ * เรียก Apps Script Web App เพื่อดึงรายงานจาก Google Sheet
+ * ต้องตั้งค่า ISECRETARY_REPORT_API_URL ใน Vercel
+ */
+async function fetchISecretaryReport(reportType) {
+  const apiBase = String(process.env.ISECRETARY_REPORT_API_URL || "").trim();
+
+  if (!apiBase) {
+    return "ยังไม่ได้ตั้งค่า ISECRETARY_REPORT_API_URL";
+  }
+
+  try {
+    const joinChar = apiBase.includes("?") ? "&" : "?";
+    const url = `${apiBase}${joinChar}report=${encodeURIComponent(reportType)}`;
+
+    console.log("ISECRETARY REPORT URL:", url);
+
+    const response = await fetch(url, { method: "GET" });
+    const rawText = await response.text();
+
+    console.log("ISECRETARY REPORT STATUS:", response.status);
+    console.log("ISECRETARY REPORT BODY:", rawText);
+
+    if (!response.ok) {
+      return "ไม่สามารถดึงรายงาน iSecretary ได้";
+    }
+
+    let data = null;
+    try {
+      data = JSON.parse(rawText);
+    } catch (err) {
+      return rawText || "ไม่พบข้อมูลรายงาน";
+    }
+
+    if (!data) return "ไม่พบข้อมูลรายงาน";
+    if (data.ok === false) return data.message || "เกิดข้อผิดพลาดในการอ่านรายงาน";
+
+    return data.text || "ไม่พบข้อความรายงาน";
+  } catch (error) {
+    console.error("fetchISecretaryReport error:", error);
+    return "ไม่สามารถเชื่อมต่อระบบรายงาน iSecretary ได้";
+  }
+}
+
+/* =========================================================
+ * PRICE CALC
+ * ========================================================= */
 
 async function calculatePriceFromSheet(text, userId) {
   const apiBase = process.env.BUSABA_PRICE_API_URL;
@@ -182,7 +324,18 @@ async function fetchPriceData(apiUrl) {
   }
 }
 
-async function reply(replyToken, text) {
+/* =========================================================
+ * LINE REPLY
+ * ========================================================= */
+
+async function reply(replyToken, text, accessToken) {
+  const finalToken = String(accessToken || "").trim();
+
+  if (!finalToken) {
+    console.error("Missing LINE access token");
+    return;
+  }
+
   const url = "https://api.line.me/v2/bot/message/reply";
 
   const payload = {
@@ -190,7 +343,7 @@ async function reply(replyToken, text) {
     messages: [
       {
         type: "text",
-        text
+        text: String(text || "")
       }
     ]
   };
@@ -199,7 +352,7 @@ async function reply(replyToken, text) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${process.env.LINE_ACCESS_TOKEN}`
+      "Authorization": `Bearer ${finalToken}`
     },
     body: JSON.stringify(payload)
   });
