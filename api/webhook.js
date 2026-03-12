@@ -272,7 +272,9 @@ async function saveRecord(obj) {
     })
   });
 
-  return await response.json();
+  const data = await response.json();
+  console.log("SAVE RECORD RESPONSE:", JSON.stringify(data));
+  return data;
 }
 
 /*************************************************
