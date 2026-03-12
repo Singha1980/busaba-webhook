@@ -577,26 +577,45 @@ async function searchWebFromApi(query) {
     return "ยังไม่ได้ตั้งค่า GOOGLE_SEARCH_API_KEY หรือ GOOGLE_SEARCH_ENGINE_ID ค่ะ คุณสิงห์";
   }
 
-  const url =
-    "https://www.googleapis.com/customsearch/v1?key=" +
-    encodeURIComponent(apiKey) +
-    "&cx=" +
-    encodeURIComponent(cseId) +
-    "&q=" +
-    encodeURIComponent(q);
+  async function runSearch(keyword) {
+    const url =
+      "https://www.googleapis.com/customsearch/v1?key=" +
+      encodeURIComponent(apiKey) +
+      "&cx=" +
+      encodeURIComponent(cseId) +
+      "&q=" +
+      encodeURIComponent(keyword);
 
-  try {
     const response = await fetch(url);
     const data = await response.json();
 
+    console.log("SEARCH KEYWORD:", keyword);
     console.log("SEARCH RESPONSE:", JSON.stringify(data));
 
-    const items = data.items || [];
+    return data;
+  }
+
+  try {
+    let data = await runSearch(q);
+    let items = data.items || [];
+
     if (!items.length) {
-      return "ไอซ์ไม่พบข้อมูลจากอินเทอร์เน็ตค่ะ คุณสิงห์";
+      data = await runSearch(q + " ประเทศไทย");
+      items = data.items || [];
+    }
+
+    if (!items.length) {
+      return [
+        "ไอซ์ยังไม่พบข้อมูลจากอินเทอร์เน็ตค่ะ คุณสิงห์",
+        "",
+        "กรุณาเช็กว่า Google Custom Search Engine",
+        "- เปิดให้ค้นทั้งเว็บแล้ว",
+        "- ไม่ได้จำกัดเฉพาะบางเว็บไซต์"
+      ].join("\n");
     }
 
     const lines = ["ไอซ์หาข้อมูลมาให้แล้วค่ะ คุณสิงห์", ""];
+
     items.slice(0, 3).forEach((item, idx) => {
       lines.push((idx + 1) + ". " + (item.title || "-"));
       if (item.snippet) lines.push(item.snippet);
