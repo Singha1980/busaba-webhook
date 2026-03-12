@@ -37,7 +37,7 @@ function handleCommand(text) {
   }
 
   if (text === "เปิดงาน") {
-    return `กรอกฟอร์มเปิดงานใหม่ได้ที่\n${process.env.BUSABA_FORM_URL || "ยังไม่ได้ตั้งค่า BUSABA_FORM_URL"}`;
+    return "กรอกข้อมูลเปิดงานใหม่ได้ที่นี่ครับ\nhttps://docs.google.com/forms/d/e/1FAIpQLScCnZxb5pdwo4VZMjXtZeCBLn8Zl-qAk5df8B1CAZnzYgdQ6A/viewform?usp=publish-editor";
   }
 
   if (text.toLowerCase() === "dashboard") {
