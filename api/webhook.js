@@ -90,7 +90,7 @@ function calculatePriceFromText(text) {
   let item = null;
 
   if (text.includes("ไวนิล")) {
-    item = { itemName: "ไวนิล", pricePerSqM: 600, minPrice: 1200 };
+    item = { itemName: "ไวนิล", pricePerSqM: 200, minPrice: 1200 };
   } else if (text.includes("คอมโพสิต")) {
     item = { itemName: "คอมโพสิต", pricePerSqM: 2500, minPrice: 3000 };
   } else if (text.includes("อะคริลิค")) {
