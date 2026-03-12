@@ -11,11 +11,13 @@ export default async function handler(req, res) {
       if (!event.message) continue;
       if (event.message.type !== "text") continue;
 
-      console.log("LINE SOURCE:", JSON.stringify(event.source));
-
       const text = String(event.message.text || "").trim();
-      const replyText = handleCommand(text);
+      const userId = event.source?.userId || "";
 
+      console.log("LINE SOURCE:", JSON.stringify(event.source));
+      console.log("TEXT:", text);
+
+      const replyText = await handleCommand(text, userId);
       await reply(event.replyToken, replyText);
     }
 
@@ -26,7 +28,7 @@ export default async function handler(req, res) {
   }
 }
 
-function handleCommand(text) {
+async function handleCommand(text, userId) {
   const lower = text.toLowerCase();
 
   if (text === "เมนู" || lower === "menu") {
@@ -53,15 +55,15 @@ function handleCommand(text) {
     return `ดู Dashboard ได้ที่\n${process.env.BUSABA_DASHBOARD_URL || "ยังไม่ได้ตั้งค่า BUSABA_DASHBOARD_URL"}`;
   }
 
-  // ===== Auto Price Calculator =====
-  const priceResult = calculatePriceFromText(text);
+  const priceResult = await calculatePriceFromSheet(text, userId);
   if (priceResult) {
     if (!priceResult.ok) return priceResult.message;
 
     return [
       "ประเมินราคางานเบื้องต้น",
       "",
-      "ประเภท: " + priceResult.itemName,
+      "ประเภทลูกค้า: " + priceResult.customerType,
+      "ประเภทงาน: " + priceResult.itemName,
       "ขนาด: " + priceResult.widthCm + "x" + priceResult.heightCm + " ซม.",
       "พื้นที่: " + priceResult.areaSqM.toFixed(2) + " ตร.ม.",
       "ราคา: " + priceResult.price.toLocaleString() + " บาท"
@@ -83,29 +85,66 @@ function handleCommand(text) {
   ].join("\n");
 }
 
-function calculatePriceFromText(text) {
+async function calculatePriceFromSheet(text, userId) {
+  const apiBase = process.env.BUSABA_PRICE_API_URL;
+  if (!apiBase) {
+    console.error("BUSABA_PRICE_API_URL is missing");
+    return {
+      ok: false,
+      message: "ยังไม่ได้ตั้งค่า BUSABA_PRICE_API_URL"
+    };
+  }
+
   const size = extractSize(text);
   if (!size) return null;
 
-  let item = null;
+  const apiUrl = `${apiBase}&line_id=${encodeURIComponent(userId)}`;
+  const data = await fetchPriceData(apiUrl);
 
-  if (text.includes("ไวนิล")) {
-    item = { itemName: "ไวนิล", pricePerSqM: 200, minPrice: 1200 };
-  } else if (text.includes("คอมโพสิต")) {
-    item = { itemName: "คอมโพสิต", pricePerSqM: 2500, minPrice: 3000 };
-  } else if (text.includes("อะคริลิค")) {
-    item = { itemName: "อะคริลิค", pricePerSqM: 3500, minPrice: 2500 };
-  } else {
-    return null;
+  if (!data || !data.ok) {
+    return {
+      ok: false,
+      message: "ไม่สามารถอ่านข้อมูลราคาจากระบบได้"
+    };
   }
 
+  const matchedRule = (data.rules || []).find(rule => {
+    return String(rule.active || "").toUpperCase() === "TRUE" &&
+           text.includes(String(rule.keyword || "").trim());
+  });
+
+  if (!matchedRule) return null;
+
+  const item = (data.catalog || []).find(c => {
+    return String(c.item_code || "").trim() === String(matchedRule.item_code || "").trim();
+  });
+
+  if (!item) {
+    return {
+      ok: false,
+      message: "พบประเภทงาน แต่ไม่พบข้อมูลราคาใน PRICE_CATALOG"
+    };
+  }
+
+  const customerType = String(data.customer_type || "ลูกค้าทั่วไป").trim();
+  const isPartner = customerType === "ลูกค้าหลังบ้าน";
+
+  const pricePerSqM = isPartner
+    ? Number(item.price_partner || 0)
+    : Number(item.price_general || 0);
+
+  const minPrice = isPartner
+    ? Number(item.min_price_partner || 0)
+    : Number(item.min_price_general || 0);
+
   const areaSqM = (size.widthCm * size.heightCm) / 10000;
-  let price = areaSqM * item.pricePerSqM;
-  if (price < item.minPrice) price = item.minPrice;
+  let price = areaSqM * pricePerSqM;
+  if (price < minPrice) price = minPrice;
 
   return {
     ok: true,
-    itemName: item.itemName,
+    customerType,
+    itemName: item.item_name,
     widthCm: size.widthCm,
     heightCm: size.heightCm,
     areaSqM,
@@ -115,17 +154,31 @@ function calculatePriceFromText(text) {
 
 function extractSize(text) {
   const m = text.match(/(\d+(?:\.\d+)?)\s*[xX*]\s*(\d+(?:\.\d+)?)/);
-  if (!m) {
-    return {
-      ok: false,
-      message: "พบประเภทงานแล้ว แต่ยังไม่พบขนาด เช่น 100x200"
-    };
-  }
+  if (!m) return null;
 
   return {
     widthCm: Number(m[1]),
     heightCm: Number(m[2])
   };
+}
+
+async function fetchPriceData(apiUrl) {
+  try {
+    console.log("PRICE API URL:", apiUrl);
+
+    const response = await fetch(apiUrl, { method: "GET" });
+    const rawText = await response.text();
+
+    console.log("PRICE API STATUS:", response.status);
+    console.log("PRICE API BODY:", rawText);
+
+    if (!response.ok) return null;
+
+    return JSON.parse(rawText);
+  } catch (error) {
+    console.error("fetchPriceData error:", error);
+    return null;
+  }
 }
 
 async function reply(replyToken, text) {
