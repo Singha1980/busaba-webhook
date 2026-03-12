@@ -11,6 +11,8 @@ export default async function handler(req, res) {
       if (!event.message) continue;
       if (event.message.type !== "text") continue;
 
+      console.log("LINE SOURCE:", JSON.stringify(event.source));
+
       const text = String(event.message.text || "").trim();
       const replyText = handleCommand(text);
 
@@ -37,7 +39,7 @@ function handleCommand(text) {
   }
 
   if (text === "เปิดงาน") {
-    return "กรอกข้อมูลเปิดงานใหม่ได้ที่นี่ครับ\nhttps://docs.google.com/forms/d/e/1FAIpQLScCnZxb5pdwo4VZMjXtZeCBLn8Zl-qAk5df8B1CAZnzYgdQ6A/viewform?usp=publish-editor";
+    return `กรอกข้อมูลเปิดงานใหม่ได้ที่นี่ครับ\n${process.env.BUSABA_FORM_URL || "ยังไม่ได้ตั้งค่า BUSABA_FORM_URL"}`;
   }
 
   if (text.toLowerCase() === "dashboard") {
