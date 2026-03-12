@@ -1,6 +1,6 @@
 /*************************************************
  * BUSABA + ISECRETARY WEBHOOK
- * V3 FULL REPLACE
+ * V3.1 NO WEB SEARCH
  *************************************************/
 
 export default async function handler(req, res) {
@@ -53,23 +53,16 @@ export default async function handler(req, res) {
 function detectBotType(text, destination) {
   const mapped = getBotTypeByDestination(destination);
   if (mapped) return mapped;
-
   if (isISecretaryCommandText(text)) return "ISECRETARY";
   return "BUSABA";
 }
 
 function getBotTypeByDestination(destination) {
   if (!destination) return "";
-
-  // ถ้ามี destination ของ OA แต่ละตัวในอนาคต ค่อย map เพิ่มตรงนี้
-  // if (destination === "xxxx") return "BUSABA";
-  // if (destination === "yyyy") return "ISECRETARY";
-
   return "";
 }
 
 function isISecretaryCommandText(text) {
-  // OA iSecretary ใช้คุยทั่วไปทั้งหมด
   return true;
 }
 
@@ -162,16 +155,46 @@ async function handleISecretaryCommand(text, userId) {
   if (cmd.includes("ด่วน")) return await fetchISecretaryReport("urgent_tasks");
   if (cmd.includes("สถานะงาน")) return await fetchISecretaryReport("task_status_summary");
 
-  // search web แบบจับก่อน
-  if (looksLikeSearchQuery(text)) {
-    return await searchWebFromApi(cleanSearchQuery(text));
-  }
-
-  // มี state ค้างอยู่ไหม
+  // ถ้ามี state ค้างอยู่ ให้จัดการก่อนทุกอย่าง
   const state = await getSecretaryState(userId);
 
   if (state) {
     console.log("FOUND STATE:", JSON.stringify(state));
+
+    // ถ้าตอบสั้น ๆ แค่ domain ให้จับตรงนี้เลย
+    const directDomain = mapShortDomainAnswer(text);
+    if (directDomain) {
+      const mergedDirect = {
+        ...state,
+        domain: directDomain
+      };
+
+      const missingAfterDirect = computeMissingFieldsLocal(mergedDirect);
+
+      if (missingAfterDirect.length > 0) {
+        await saveSecretaryState(userId, {
+          ...mergedDirect,
+          missing_fields: missingAfterDirect
+        });
+        return buildFollowupText(missingAfterDirect);
+      }
+
+      const savedDirect = await saveSecretaryRecord({
+        ...mergedDirect,
+        user_id: userId,
+        raw_text: text,
+        priority: inferPriority(text, mergedDirect)
+      });
+
+      console.log("SAVE RESULT (DIRECT DOMAIN):", JSON.stringify(savedDirect));
+
+      if (!savedDirect.ok) {
+        return "บันทึกไม่สำเร็จค่ะ คุณสิงห์: " + (savedDirect.message || "unknown error");
+      }
+
+      await clearSecretaryState(userId);
+      return buildSaveSuccessText(savedDirect, mergedDirect);
+    }
 
     const followupParsed = await parseWithGPT(text);
     followupParsed.domain = inferDomainFromTextAndParsed(text, followupParsed, state.domain || "");
@@ -232,10 +255,6 @@ async function handleISecretaryCommand(text, userId) {
     return await buildChatReply(text, userId);
   }
 
-  if (parsed.intent === "search_web") {
-    return await searchWebFromApi(parsed.detail || text);
-  }
-
   const missingFields = Array.isArray(parsed.missing_fields) ? [...parsed.missing_fields] : [];
 
   if (!parsed.domain && !missingFields.includes("domain")) {
@@ -292,7 +311,6 @@ async function parseWithGPT(text) {
 intent ต้องเป็นหนึ่งใน:
 task
 appointment
-search_web
 chat
 
 domain ต้องเป็นหนึ่งใน:
@@ -322,7 +340,6 @@ reply_text
 - ถ้าข้อมูลไม่ครบให้ใส่ชื่อ field ใน missing_fields
 - missing_fields ต้องเป็น array เสมอ
 - ถ้าเป็น chat ให้ใส่ reply_text แบบสุภาพ เป็นกันเอง
-- ถ้าเป็น search_web ให้ใส่ detail เป็นคำค้น
 - ถ้าข้อความมีคำว่า ประชุม นัด เจอ คุย เข้าพบ ดูหน้างาน ให้พิจารณาเป็น appointment ก่อน
 - ถ้าข้อความมีคำว่า เตือน ฝากงาน โทรตาม ส่งของ เช็กแบบ ทำป้าย ให้พิจารณาเป็น task ก่อน
 - ถ้าเดา domain ไม่ได้ ให้ใส่ ""
@@ -387,10 +404,6 @@ reply_text
   }
 }
 
-/* =========================================================
- * CHAT MODE
- * ========================================================= */
-
 async function buildChatReply(text, userId) {
   try {
     const model = String(process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
@@ -403,11 +416,10 @@ async function buildChatReply(text, userId) {
 - เป็นกันเอง
 - ใช้คำลงท้ายว่า "ค่ะ คุณสิงห์" เมื่อเหมาะสม
 - คุยเหมือนเลขาส่วนตัวจริง
-- ถ้าช่วยจัดงาน วางแผน หรือเตือนอะไรได้ ให้เสนออย่างพอดี
-- ตอบกระชับ อ่านง่าย ไม่เยิ่นเย้อ
+- ช่วยคิด ช่วยเตือน ช่วยจัดระเบียบงาน
+- ตอบกระชับ อ่านง่าย
 
-ห้ามอ้างว่าคุณทำสิ่งที่ระบบยังทำไม่ได้
-ถ้าต้องการให้บันทึกงานหรือเช็กงาน ให้ชวนคุณสิงห์พิมพ์ต่อได้อย่างสุภาพ
+ห้ามอ้างว่าทำสิ่งที่ระบบยังทำไม่ได้
 `;
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -510,6 +522,16 @@ function inferDomainFromTextAndParsed(text, parsed, fallbackDomain) {
   return String(parsed?.domain || fallbackDomain || "").trim();
 }
 
+function mapShortDomainAnswer(text) {
+  const t = normalizeText(text);
+
+  if (t === "สมาคม" || t === "สมาคมนักธุรกิจ") return "สมาคมนักธุรกิจ";
+  if (t === "เทศบาล" || t === "เทศบาลเขาชีจรรย์" || t === "เขาชีจรรย์") return "เทศบาลเขาชีจรรย์";
+  if (t === "ร้านป้าย" || t === "ป้าย") return "ร้านป้าย";
+
+  return "";
+}
+
 function inferPriority(text, parsed) {
   const all = [String(text || ""), String(parsed?.detail || ""), String(parsed?.note || "")]
     .join(" ")
@@ -528,106 +550,25 @@ function inferPriority(text, parsed) {
   return "NORMAL";
 }
 
-/* =========================================================
- * SEARCH
- * ========================================================= */
+function computeMissingFieldsLocal(obj) {
+  const missing = [];
 
-function looksLikeSearchQuery(text) {
-  const t = String(text || "").trim().toLowerCase();
-  if (!t) return false;
+  if (!obj.intent) missing.push("intent");
+  if (!obj.detail) missing.push("detail");
 
-  if (t.startsWith("ค้นเว็บ")) return true;
-  if (t.startsWith("หาในเน็ต")) return true;
-  if (t.startsWith("ค้นหา")) return true;
-
-  const patterns = [
-    "ราคาทอง",
-    "ราคาน้ำมัน",
-    "ข่าว",
-    "อากาศ",
-    "ผลบอล",
-    "หุ้น",
-    "ค่าเงิน",
-    "bitcoin",
-    "btc",
-    "ทองวันนี้",
-    "วันนี้ราคา",
-    "ล่าสุด"
-  ];
-
-  return patterns.some(p => t.includes(p));
-}
-
-function cleanSearchQuery(text) {
-  return String(text || "")
-    .replace(/^ค้นเว็บ\s*/i, "")
-    .replace(/^หาในเน็ต\s*/i, "")
-    .replace(/^ค้นหา\s*/i, "")
-    .trim();
-}
-
-async function searchWebFromApi(query) {
-  const q = String(query || "").trim();
-  if (!q) return "ไอซ์ยังไม่พบคำค้นค่ะ คุณสิงห์";
-
-  const apiKey = String(process.env.GOOGLE_SEARCH_API_KEY || "").trim();
-  const cseId = String(process.env.GOOGLE_SEARCH_ENGINE_ID || "").trim();
-
-  if (!apiKey || !cseId) {
-    return "ยังไม่ได้ตั้งค่า GOOGLE_SEARCH_API_KEY หรือ GOOGLE_SEARCH_ENGINE_ID ค่ะ คุณสิงห์";
+  if (obj.intent === "appointment") {
+    if (!obj.date) missing.push("date");
+    if (!obj.time) missing.push("time");
+    if (!obj.location) missing.push("location");
   }
 
-  async function runSearch(keyword) {
-    const url =
-      "https://www.googleapis.com/customsearch/v1?key=" +
-      encodeURIComponent(apiKey) +
-      "&cx=" +
-      encodeURIComponent(cseId) +
-      "&q=" +
-      encodeURIComponent(keyword);
-
-    const response = await fetch(url);
-    const data = await response.json();
-
-    console.log("SEARCH KEYWORD:", keyword);
-    console.log("SEARCH RESPONSE:", JSON.stringify(data));
-
-    return data;
+  if (obj.intent === "task") {
+    if (!obj.date) missing.push("date");
   }
 
-  try {
-    let data = await runSearch(q);
-    let items = data.items || [];
+  if (!obj.domain) missing.push("domain");
 
-    if (!items.length) {
-      data = await runSearch(q + " ประเทศไทย");
-      items = data.items || [];
-    }
-
-    if (!items.length) {
-      return [
-        "ไอซ์ยังไม่พบข้อมูลจากอินเทอร์เน็ตค่ะ คุณสิงห์",
-        "",
-        "กรุณาเช็กว่า Google Custom Search Engine",
-        "- เปิดให้ค้นทั้งเว็บแล้ว",
-        "- ไม่ได้จำกัดเฉพาะบางเว็บไซต์"
-      ].join("\n");
-    }
-
-    const lines = ["ไอซ์หาข้อมูลมาให้แล้วค่ะ คุณสิงห์", ""];
-
-    items.slice(0, 3).forEach((item, idx) => {
-      lines.push((idx + 1) + ". " + (item.title || "-"));
-      if (item.snippet) lines.push(item.snippet);
-      if (item.link) lines.push(item.link);
-      lines.push("");
-    });
-
-    return lines.join("\n").trim();
-  } catch (err) {
-    console.error("searchWebFromApi error:", err);
-    return "ค้นข้อมูลจากอินเทอร์เน็ตไม่สำเร็จค่ะ คุณสิงห์";
-  }
+  return missing;
 }
 
 /* =========================================================
