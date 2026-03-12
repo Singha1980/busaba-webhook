@@ -15,10 +15,6 @@ export default async function handler(req, res) {
       const text = String(event.message.text || "").trim();
       const userId = event.source?.userId || "";
 
-      console.log("LINE DESTINATION:", destination);
-      console.log("LINE SOURCE:", JSON.stringify(event.source));
-      console.log("TEXT:", text);
-
       const botType = detectBotType(text, destination);
 
       let replyText = "";
@@ -39,10 +35,6 @@ export default async function handler(req, res) {
   }
 }
 
-/* =========================================================
- * BOT ROUTER
- * ========================================================= */
-
 function detectBotType(text, destination) {
   const mapped = getBotTypeByDestination(destination);
   if (mapped) return mapped;
@@ -56,11 +48,6 @@ function detectBotType(text, destination) {
 
 function getBotTypeByDestination(destination) {
   if (!destination) return "";
-
-  // ภายหลังถ้าคุณรู้ destination ของ OA แต่ละตัว ค่อยมาใส่ตรงนี้
-  // if (destination === "Uxxxxxxxxxxxxxxxxxx") return "BUSABA";
-  // if (destination === "Uyyyyyyyyyyyyyyyyyy") return "ISECRETARY";
-
   return "";
 }
 
@@ -72,6 +59,8 @@ function isISecretaryCommandText(text) {
   if (cmd.includes("สรุปวันนี้")) return true;
   if (cmd.includes("พรุ่งนี้มีนัดไหม")) return true;
   if (cmd.includes("พรุ่งนี้มีนัดมั้ย")) return true;
+  if (cmd.includes("ด่วน")) return true;
+  if (cmd.includes("สถานะงาน")) return true;
 
   return false;
 }
@@ -86,10 +75,6 @@ function getAccessTokenByBotType(botType) {
 function normalizeText(text) {
   return String(text || "").trim().replace(/\s+/g, "");
 }
-
-/* =========================================================
- * BUSABA COMMANDS
- * ========================================================= */
 
 async function handleBusabaCommand(text, userId) {
   const lower = text.toLowerCase();
@@ -148,10 +133,6 @@ async function handleBusabaCommand(text, userId) {
   ].join("\n");
 }
 
-/* =========================================================
- * ISECRETARY COMMANDS
- * ========================================================= */
-
 async function handleISecretaryCommand(text, userId) {
   const cmd = normalizeText(text);
 
@@ -171,6 +152,14 @@ async function handleISecretaryCommand(text, userId) {
     return await fetchISecretaryReport("tomorrow_appointments");
   }
 
+  if (cmd.includes("ด่วน")) {
+    return await fetchISecretaryReport("urgent_tasks");
+  }
+
+  if (cmd.includes("สถานะงาน")) {
+    return await fetchISecretaryReport("task_status_summary");
+  }
+
   return [
     "iSecretary",
     "",
@@ -178,7 +167,9 @@ async function handleISecretaryCommand(text, userId) {
     "- งานวันนี้",
     "- งานค้าง",
     "- สรุปวันนี้",
-    "- พรุ่งนี้มีนัดไหม"
+    "- พรุ่งนี้มีนัดไหม",
+    "- ด่วน",
+    "- สถานะงาน"
   ].join("\n");
 }
 
@@ -193,13 +184,8 @@ async function fetchISecretaryReport(reportType) {
     const joinChar = apiBase.includes("?") ? "&" : "?";
     const url = `${apiBase}${joinChar}report=${encodeURIComponent(reportType)}`;
 
-    console.log("ISECRETARY REPORT URL:", url);
-
     const response = await fetch(url, { method: "GET", redirect: "follow" });
     const rawText = await response.text();
-
-    console.log("ISECRETARY REPORT STATUS:", response.status);
-    console.log("ISECRETARY REPORT BODY:", rawText);
 
     if (!response.ok) {
       return "ไม่สามารถดึงรายงาน iSecretary ได้";
@@ -222,14 +208,9 @@ async function fetchISecretaryReport(reportType) {
   }
 }
 
-/* =========================================================
- * PRICE CALC
- * ========================================================= */
-
 async function calculatePriceFromSheet(text, userId) {
   const apiBase = process.env.BUSABA_PRICE_API_URL;
   if (!apiBase) {
-    console.error("BUSABA_PRICE_API_URL is missing");
     return {
       ok: false,
       message: "ยังไม่ได้ตั้งค่า BUSABA_PRICE_API_URL"
@@ -306,34 +287,18 @@ function extractSize(text) {
 
 async function fetchPriceData(apiUrl) {
   try {
-    console.log("PRICE API URL:", apiUrl);
-
     const response = await fetch(apiUrl, { method: "GET" });
     const rawText = await response.text();
-
-    console.log("PRICE API STATUS:", response.status);
-    console.log("PRICE API BODY:", rawText);
-
     if (!response.ok) return null;
-
     return JSON.parse(rawText);
   } catch (error) {
-    console.error("fetchPriceData error:", error);
     return null;
   }
 }
 
-/* =========================================================
- * LINE REPLY
- * ========================================================= */
-
 async function reply(replyToken, text, accessToken) {
   const finalToken = String(accessToken || "").trim();
-
-  if (!finalToken) {
-    console.error("Missing LINE access token");
-    return;
-  }
+  if (!finalToken) return;
 
   const url = "https://api.line.me/v2/bot/message/reply";
 
@@ -347,7 +312,7 @@ async function reply(replyToken, text, accessToken) {
     ]
   };
 
-  const response = await fetch(url, {
+  await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -355,7 +320,4 @@ async function reply(replyToken, text, accessToken) {
     },
     body: JSON.stringify(payload)
   });
-
-  const body = await response.text();
-  console.log("LINE reply:", response.status, body);
 }
