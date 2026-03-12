@@ -98,7 +98,8 @@ async function calculatePriceFromSheet(text, userId) {
   const size = extractSize(text);
   if (!size) return null;
 
-  const apiUrl = `${apiBase}&line_id=${encodeURIComponent(userId)}`;
+  const joinChar = apiBase.includes("?") ? "&" : "?";
+  const apiUrl = `${apiBase}${joinChar}line_id=${encodeURIComponent(userId)}`;
   const data = await fetchPriceData(apiUrl);
 
   if (!data || !data.ok) {
