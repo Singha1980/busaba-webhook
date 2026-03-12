@@ -1,6 +1,6 @@
 /*************************************************
  * BUSABA + ISECRETARY WEBHOOK
- * FULL REPLACE VERSION
+ * V2.1 FULL REPLACE
  *************************************************/
 
 export default async function handler(req, res) {
@@ -54,19 +54,16 @@ function detectBotType(text, destination) {
   const mapped = getBotTypeByDestination(destination);
   if (mapped) return mapped;
 
-  if (isISecretaryCommandText(text)) {
-    return "ISECRETARY";
-  }
-
+  if (isISecretaryCommandText(text)) return "ISECRETARY";
   return "BUSABA";
 }
 
 function getBotTypeByDestination(destination) {
   if (!destination) return "";
 
-  // ถ้ามี destination ของ OA แต่ละตัวในอนาคต ค่อย map เพิ่มตรงนี้
-  // if (destination === "xxxxxxxx") return "BUSABA";
-  // if (destination === "yyyyyyyy") return "ISECRETARY";
+  // เพิ่ม mapping ภายหลังได้ถ้าต้องการ
+  // if (destination === "xxxx") return "BUSABA";
+  // if (destination === "yyyy") return "ISECRETARY";
 
   return "";
 }
@@ -82,7 +79,7 @@ function isISecretaryCommandText(text) {
   if (cmd.includes("ด่วน")) return true;
   if (cmd.includes("สถานะงาน")) return true;
 
-  // ข้อความธรรมชาติอื่น ๆ ให้ iSecretary รับต่อได้
+  // OA iSecretary ใช้คุยเรื่องทั่วไปได้ทั้งหมด
   return true;
 }
 
@@ -174,13 +171,14 @@ async function handleISecretaryCommand(text, userId) {
   if (cmd.includes("ด่วน")) return await fetchISecretaryReport("urgent_tasks");
   if (cmd.includes("สถานะงาน")) return await fetchISecretaryReport("task_status_summary");
 
-  // มี state ค้างอยู่ไหม
   const state = await getSecretaryState(userId);
 
   if (state) {
     console.log("FOUND STATE:", JSON.stringify(state));
 
     const followupParsed = await parseWithGPT(text);
+    followupParsed.domain = inferDomainFromTextAndParsed(text, followupParsed, state.domain || "");
+    followupParsed.priority = inferPriority(text, followupParsed);
     console.log("FOLLOWUP PARSED:", JSON.stringify(followupParsed));
 
     const merged = await mergeSecretaryState(userId, followupParsed, text);
@@ -190,8 +188,21 @@ async function handleISecretaryCommand(text, userId) {
       return "ไอซ์รวมข้อมูลต่อไม่สำเร็จค่ะ";
     }
 
+    // ถ้ายังไม่ชัดเรื่อง domain ให้ถามกลับก่อน
+    if (!merged.merged.domain) {
+      const payloadForState = {
+        ...merged.merged,
+        missing_fields: ["domain"]
+      };
+      await saveSecretaryState(userId, payloadForState);
+      return buildFollowupText(["domain"]);
+    }
+
     if (merged.missing_fields && merged.missing_fields.length > 0) {
-      await saveSecretaryState(userId, merged.merged);
+      await saveSecretaryState(userId, {
+        ...merged.merged,
+        missing_fields: merged.missing_fields
+      });
       return buildFollowupText(merged.missing_fields);
     }
 
@@ -211,8 +222,9 @@ async function handleISecretaryCommand(text, userId) {
     return buildSaveSuccessText(saved, merged.merged);
   }
 
-  // parse ใหม่
   const parsed = await parseWithGPT(text);
+  parsed.domain = inferDomainFromTextAndParsed(text, parsed, "");
+  parsed.priority = inferPriority(text, parsed);
   console.log("PARSED OBJECT:", JSON.stringify(parsed));
 
   if (!parsed.intent) {
@@ -227,10 +239,18 @@ async function handleISecretaryCommand(text, userId) {
     return await searchWebFromApi(parsed.detail || text);
   }
 
-  const missingFields = Array.isArray(parsed.missing_fields) ? parsed.missing_fields : [];
+  const missingFields = Array.isArray(parsed.missing_fields) ? [...parsed.missing_fields] : [];
+
+  // ถ้า domain ยังไม่ชัด ให้ถามกลับ
+  if (!parsed.domain && !missingFields.includes("domain")) {
+    missingFields.push("domain");
+  }
 
   if (missingFields.length > 0) {
-    await saveSecretaryState(userId, parsed);
+    await saveSecretaryState(userId, {
+      ...parsed,
+      missing_fields: missingFields
+    });
     return buildFollowupText(missingFields);
   }
 
@@ -307,19 +327,7 @@ reply_text
 - ถ้าเป็น search_web ให้ใส่ detail เป็นคำค้น
 - ถ้าข้อความมีคำว่า ประชุม นัด เจอ คุย เข้าพบ ดูหน้างาน ให้พิจารณาเป็น appointment ก่อน
 - ถ้าข้อความมีคำว่า เตือน ฝากงาน โทรตาม ส่งของ เช็กแบบ ทำป้าย ให้พิจารณาเป็น task ก่อน
-
-ตัวอย่างที่ถูก:
-{
-  "intent":"appointment",
-  "domain":"เทศบาลเขาชีจรรย์",
-  "date":"${tomorrowISO}",
-  "time":"14:00",
-  "detail":"ประชุมเทศบาล",
-  "location":"ห้องประชุมใหญ่",
-  "note":"",
-  "missing_fields":[],
-  "reply_text":""
-}
+- ถ้าเดา domain ไม่ได้ ให้ใส่ ""
 `;
 
     const body = {
@@ -423,6 +431,55 @@ function normalizeParsedObject(parsed) {
     missing_fields: Array.isArray(parsed?.missing_fields) ? parsed.missing_fields : [],
     reply_text: String(parsed?.reply_text || "").trim()
   };
+}
+
+/* =========================================================
+ * DOMAIN + PRIORITY INFERENCE
+ * ========================================================= */
+
+function inferDomainFromTextAndParsed(text, parsed, fallbackDomain) {
+  const sourceText = String(text || "").toLowerCase();
+  const detail = String(parsed?.detail || "").toLowerCase();
+  const location = String(parsed?.location || "").toLowerCase();
+  const all = [sourceText, detail, location].join(" ");
+
+  if (all.includes("สมาคม") || all.includes("นักธุรกิจ")) {
+    return "สมาคมนักธุรกิจ";
+  }
+
+  if (all.includes("เทศบาล") || all.includes("เขาชีจรรย์") || all.includes("ชุมชน")) {
+    return "เทศบาลเขาชีจรรย์";
+  }
+
+  if (
+    all.includes("ป้าย") ||
+    all.includes("ลูกค้า") ||
+    all.includes("ติดตั้ง") ||
+    all.includes("ผลิต") ||
+    all.includes("ร้านป้าย")
+  ) {
+    return "ร้านป้าย";
+  }
+
+  return String(parsed?.domain || fallbackDomain || "").trim();
+}
+
+function inferPriority(text, parsed) {
+  const all = [String(text || ""), String(parsed?.detail || ""), String(parsed?.note || "")]
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    all.includes("ด่วน") ||
+    all.includes("ด่วนมาก") ||
+    all.includes("รีบ") ||
+    all.includes("ทันที") ||
+    all.includes("urgent")
+  ) {
+    return "HIGH";
+  }
+
+  return "NORMAL";
 }
 
 /* =========================================================
@@ -539,12 +596,18 @@ async function saveSecretaryRecord(payload) {
 
 function buildFollowupText(missingFields) {
   const map = {
+    domain: "งานนี้เป็นเรื่อง สมาคม / เทศบาล / ร้านป้าย คะ",
     intent: "ประเภท",
     date: "วันที่",
     time: "เวลา",
     detail: "รายละเอียด",
     location: "สถานที่"
   };
+
+  // ถ้ามี domain อย่างเดียว ให้ถามแบบเป็นธรรมชาติ
+  if (missingFields.length === 1 && missingFields[0] === "domain") {
+    return "งานนี้เป็นเรื่อง สมาคม / เทศบาล / ร้านป้าย คะ";
+  }
 
   const lines = ["ไอซ์ขอข้อมูลเพิ่มอีกนิดค่ะ", ""];
   missingFields.forEach(f => lines.push("- " + (map[f] || f)));
@@ -564,6 +627,10 @@ function buildSaveSuccessText(saved, parsed) {
     "หมายเหตุ: " + (parsed.note || "-")
   ];
 
+  if (parsed.priority === "HIGH") {
+    lines.push("ระดับความสำคัญ: ด่วน");
+  }
+
   if (saved && saved.is_lottery_day) {
     lines.push("");
     lines.push("หมายเหตุเพิ่มเติม: วันดังกล่าวตรงกับวันหวยออก");
@@ -577,7 +644,46 @@ function buildSaveSuccessText(saved, parsed) {
  * ========================================================= */
 
 async function searchWebFromApi(query) {
-  return "กำลังค้นข้อมูลให้ค่ะ: " + query;
+  const q = String(query || "").trim();
+  if (!q) return "ไอซ์ยังไม่พบคำค้นค่ะ";
+
+  const apiKey = String(process.env.GOOGLE_SEARCH_API_KEY || "").trim();
+  const cseId = String(process.env.GOOGLE_SEARCH_ENGINE_ID || "").trim();
+
+  if (!apiKey || !cseId) {
+    return "ยังไม่ได้ตั้งค่า GOOGLE_SEARCH_API_KEY หรือ GOOGLE_SEARCH_ENGINE_ID";
+  }
+
+  const url =
+    "https://www.googleapis.com/customsearch/v1?key=" +
+    encodeURIComponent(apiKey) +
+    "&cx=" +
+    encodeURIComponent(cseId) +
+    "&q=" +
+    encodeURIComponent(q);
+
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+
+    const items = data.items || [];
+    if (!items.length) {
+      return "ไอซ์ไม่พบข้อมูลจากอินเทอร์เน็ตค่ะ";
+    }
+
+    const lines = ["ไอซ์หาข้อมูลมาให้แล้วค่ะ", ""];
+    items.slice(0, 3).forEach((item, idx) => {
+      lines.push((idx + 1) + ". " + (item.title || "-"));
+      lines.push(item.link || "-");
+      if (item.snippet) lines.push(item.snippet);
+      lines.push("");
+    });
+
+    return lines.join("\n").trim();
+  } catch (err) {
+    console.error("searchWebFromApi error:", err);
+    return "ค้นข้อมูลจากอินเทอร์เน็ตไม่สำเร็จค่ะ";
+  }
 }
 
 /* =========================================================
