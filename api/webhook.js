@@ -1,6 +1,6 @@
 /*************************************************
  * BUSABA + ISECRETARY WEBHOOK
- * V2.1 FULL REPLACE
+ * V3 FULL REPLACE
  *************************************************/
 
 export default async function handler(req, res) {
@@ -61,7 +61,7 @@ function detectBotType(text, destination) {
 function getBotTypeByDestination(destination) {
   if (!destination) return "";
 
-  // เพิ่ม mapping ภายหลังได้ถ้าต้องการ
+  // ถ้ามี destination ของ OA แต่ละตัวในอนาคต ค่อย map เพิ่มตรงนี้
   // if (destination === "xxxx") return "BUSABA";
   // if (destination === "yyyy") return "ISECRETARY";
 
@@ -69,17 +69,7 @@ function getBotTypeByDestination(destination) {
 }
 
 function isISecretaryCommandText(text) {
-  const cmd = normalizeText(text);
-
-  if (cmd.includes("งานวันนี้")) return true;
-  if (cmd.includes("งานค้าง")) return true;
-  if (cmd.includes("สรุปวันนี้")) return true;
-  if (cmd.includes("พรุ่งนี้มีนัดไหม")) return true;
-  if (cmd.includes("พรุ่งนี้มีนัดมั้ย")) return true;
-  if (cmd.includes("ด่วน")) return true;
-  if (cmd.includes("สถานะงาน")) return true;
-
-  // OA iSecretary ใช้คุยเรื่องทั่วไปได้ทั้งหมด
+  // OA iSecretary ใช้คุยทั่วไปทั้งหมด
   return true;
 }
 
@@ -162,6 +152,7 @@ async function handleBusabaCommand(text, userId) {
 async function handleISecretaryCommand(text, userId) {
   const cmd = normalizeText(text);
 
+  // รายงาน
   if (cmd.includes("งานวันนี้")) return await fetchISecretaryReport("today_tasks");
   if (cmd.includes("งานค้าง")) return await fetchISecretaryReport("overdue_tasks");
   if (cmd.includes("สรุปวันนี้")) return await fetchISecretaryReport("today_summary");
@@ -171,6 +162,12 @@ async function handleISecretaryCommand(text, userId) {
   if (cmd.includes("ด่วน")) return await fetchISecretaryReport("urgent_tasks");
   if (cmd.includes("สถานะงาน")) return await fetchISecretaryReport("task_status_summary");
 
+  // search web แบบจับก่อน
+  if (looksLikeSearchQuery(text)) {
+    return await searchWebFromApi(cleanSearchQuery(text));
+  }
+
+  // มี state ค้างอยู่ไหม
   const state = await getSecretaryState(userId);
 
   if (state) {
@@ -185,10 +182,9 @@ async function handleISecretaryCommand(text, userId) {
     console.log("MERGED STATE RESULT:", JSON.stringify(merged));
 
     if (!merged.ok) {
-      return "ไอซ์รวมข้อมูลต่อไม่สำเร็จค่ะ";
+      return "ไอซ์รวมข้อมูลต่อไม่สำเร็จค่ะ คุณสิงห์";
     }
 
-    // ถ้ายังไม่ชัดเรื่อง domain ให้ถามกลับก่อน
     if (!merged.merged.domain) {
       const payloadForState = {
         ...merged.merged,
@@ -208,6 +204,7 @@ async function handleISecretaryCommand(text, userId) {
 
     const saved = await saveSecretaryRecord({
       ...merged.merged,
+      priority: merged.merged.priority || inferPriority(text, merged.merged),
       user_id: userId,
       raw_text: text
     });
@@ -215,7 +212,7 @@ async function handleISecretaryCommand(text, userId) {
     console.log("SAVE RESULT (STATE FLOW):", JSON.stringify(saved));
 
     if (!saved.ok) {
-      return "บันทึกไม่สำเร็จค่ะ: " + (saved.message || "unknown error");
+      return "บันทึกไม่สำเร็จค่ะ คุณสิงห์: " + (saved.message || "unknown error");
     }
 
     await clearSecretaryState(userId);
@@ -228,11 +225,11 @@ async function handleISecretaryCommand(text, userId) {
   console.log("PARSED OBJECT:", JSON.stringify(parsed));
 
   if (!parsed.intent) {
-    return "ไอซ์ยังตีความไม่สำเร็จค่ะ ลองพิมพ์ใหม่อีกนิดนะคะ";
+    return "ไอซ์ยังตีความไม่สำเร็จค่ะ ลองพิมพ์ใหม่อีกนิดนะคะ คุณสิงห์";
   }
 
   if (parsed.intent === "chat") {
-    return parsed.reply_text || "รับทราบค่ะ";
+    return await buildChatReply(text, userId);
   }
 
   if (parsed.intent === "search_web") {
@@ -241,7 +238,6 @@ async function handleISecretaryCommand(text, userId) {
 
   const missingFields = Array.isArray(parsed.missing_fields) ? [...parsed.missing_fields] : [];
 
-  // ถ้า domain ยังไม่ชัด ให้ถามกลับ
   if (!parsed.domain && !missingFields.includes("domain")) {
     missingFields.push("domain");
   }
@@ -263,14 +259,14 @@ async function handleISecretaryCommand(text, userId) {
   console.log("SAVE RESULT:", JSON.stringify(saved));
 
   if (!saved.ok) {
-    return "บันทึกไม่สำเร็จค่ะ: " + (saved.message || "unknown error");
+    return "บันทึกไม่สำเร็จค่ะ คุณสิงห์: " + (saved.message || "unknown error");
   }
 
   return buildSaveSuccessText(saved, parsed);
 }
 
 /* =========================================================
- * GPT MINI PARSER
+ * GPT PARSER
  * ========================================================= */
 
 async function parseWithGPT(text) {
@@ -285,7 +281,9 @@ async function parseWithGPT(text) {
     const systemPrompt = `
 วันนี้คือ ${todayISO}
 
-คุณคือเลขาส่วนตัวชื่อ iSecretary
+คุณคือเลขาส่วนตัวชื่อ "ไอซ์"
+กำลังดูแลงานของ "คุณสิงห์"
+
 ให้ตอบเป็น JSON object เท่านั้น
 ห้ามตอบเป็นข้อความธรรมดา
 ห้ามใช้ markdown
@@ -323,7 +321,7 @@ reply_text
 - ถ้าไม่แน่ใจให้ใส่ ""
 - ถ้าข้อมูลไม่ครบให้ใส่ชื่อ field ใน missing_fields
 - missing_fields ต้องเป็น array เสมอ
-- ถ้าเป็น chat ให้ใส่ reply_text
+- ถ้าเป็น chat ให้ใส่ reply_text แบบสุภาพ เป็นกันเอง
 - ถ้าเป็น search_web ให้ใส่ detail เป็นคำค้น
 - ถ้าข้อความมีคำว่า ประชุม นัด เจอ คุย เข้าพบ ดูหน้างาน ให้พิจารณาเป็น appointment ก่อน
 - ถ้าข้อความมีคำว่า เตือน ฝากงาน โทรตาม ส่งของ เช็กแบบ ทำป้าย ให้พิจารณาเป็น task ก่อน
@@ -372,7 +370,6 @@ reply_text
 
     const parsed = parseJsonSafely(content);
     return normalizeParsedObject(parsed);
-
   } catch (err) {
     console.error("parseWithGPT error:", err);
 
@@ -387,6 +384,55 @@ reply_text
       missing_fields: [],
       reply_text: ""
     };
+  }
+}
+
+/* =========================================================
+ * CHAT MODE
+ * ========================================================= */
+
+async function buildChatReply(text, userId) {
+  try {
+    const model = String(process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
+
+    const prompt = `
+คุณคือ "ไอซ์" เลขาส่วนตัวของ "คุณสิงห์"
+
+บุคลิก:
+- สุภาพ
+- เป็นกันเอง
+- ใช้คำลงท้ายว่า "ค่ะ คุณสิงห์" เมื่อเหมาะสม
+- คุยเหมือนเลขาส่วนตัวจริง
+- ถ้าช่วยจัดงาน วางแผน หรือเตือนอะไรได้ ให้เสนออย่างพอดี
+- ตอบกระชับ อ่านง่าย ไม่เยิ่นเย้อ
+
+ห้ามอ้างว่าคุณทำสิ่งที่ระบบยังทำไม่ได้
+ถ้าต้องการให้บันทึกงานหรือเช็กงาน ให้ชวนคุณสิงห์พิมพ์ต่อได้อย่างสุภาพ
+`;
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.5,
+        messages: [
+          { role: "system", content: prompt },
+          { role: "user", content: text }
+        ]
+      })
+    });
+
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content || "";
+
+    return String(content || "รับทราบค่ะ คุณสิงห์").trim();
+  } catch (err) {
+    console.error("buildChatReply error:", err);
+    return "รับทราบค่ะ คุณสิงห์";
   }
 }
 
@@ -434,7 +480,7 @@ function normalizeParsedObject(parsed) {
 }
 
 /* =========================================================
- * DOMAIN + PRIORITY INFERENCE
+ * DOMAIN + PRIORITY
  * ========================================================= */
 
 function inferDomainFromTextAndParsed(text, parsed, fallbackDomain) {
@@ -483,6 +529,89 @@ function inferPriority(text, parsed) {
 }
 
 /* =========================================================
+ * SEARCH
+ * ========================================================= */
+
+function looksLikeSearchQuery(text) {
+  const t = String(text || "").trim().toLowerCase();
+  if (!t) return false;
+
+  if (t.startsWith("ค้นเว็บ")) return true;
+  if (t.startsWith("หาในเน็ต")) return true;
+  if (t.startsWith("ค้นหา")) return true;
+
+  const patterns = [
+    "ราคาทอง",
+    "ราคาน้ำมัน",
+    "ข่าว",
+    "อากาศ",
+    "ผลบอล",
+    "หุ้น",
+    "ค่าเงิน",
+    "bitcoin",
+    "btc",
+    "ทองวันนี้",
+    "วันนี้ราคา",
+    "ล่าสุด"
+  ];
+
+  return patterns.some(p => t.includes(p));
+}
+
+function cleanSearchQuery(text) {
+  return String(text || "")
+    .replace(/^ค้นเว็บ\s*/i, "")
+    .replace(/^หาในเน็ต\s*/i, "")
+    .replace(/^ค้นหา\s*/i, "")
+    .trim();
+}
+
+async function searchWebFromApi(query) {
+  const q = String(query || "").trim();
+  if (!q) return "ไอซ์ยังไม่พบคำค้นค่ะ คุณสิงห์";
+
+  const apiKey = String(process.env.GOOGLE_SEARCH_API_KEY || "").trim();
+  const cseId = String(process.env.GOOGLE_SEARCH_ENGINE_ID || "").trim();
+
+  if (!apiKey || !cseId) {
+    return "ยังไม่ได้ตั้งค่า GOOGLE_SEARCH_API_KEY หรือ GOOGLE_SEARCH_ENGINE_ID ค่ะ คุณสิงห์";
+  }
+
+  const url =
+    "https://www.googleapis.com/customsearch/v1?key=" +
+    encodeURIComponent(apiKey) +
+    "&cx=" +
+    encodeURIComponent(cseId) +
+    "&q=" +
+    encodeURIComponent(q);
+
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+
+    console.log("SEARCH RESPONSE:", JSON.stringify(data));
+
+    const items = data.items || [];
+    if (!items.length) {
+      return "ไอซ์ไม่พบข้อมูลจากอินเทอร์เน็ตค่ะ คุณสิงห์";
+    }
+
+    const lines = ["ไอซ์หาข้อมูลมาให้แล้วค่ะ คุณสิงห์", ""];
+    items.slice(0, 3).forEach((item, idx) => {
+      lines.push((idx + 1) + ". " + (item.title || "-"));
+      if (item.snippet) lines.push(item.snippet);
+      if (item.link) lines.push(item.link);
+      lines.push("");
+    });
+
+    return lines.join("\n").trim();
+  } catch (err) {
+    console.error("searchWebFromApi error:", err);
+    return "ค้นข้อมูลจากอินเทอร์เน็ตไม่สำเร็จค่ะ คุณสิงห์";
+  }
+}
+
+/* =========================================================
  * APPS SCRIPT API
  * ========================================================= */
 
@@ -490,7 +619,7 @@ async function fetchISecretaryReport(reportType) {
   const apiBase = String(process.env.ISECRETARY_REPORT_API_URL || "").trim();
 
   if (!apiBase) {
-    return "ยังไม่ได้ตั้งค่า ISECRETARY_REPORT_API_URL";
+    return "ยังไม่ได้ตั้งค่า ISECRETARY_REPORT_API_URL ค่ะ คุณสิงห์";
   }
 
   const joinChar = apiBase.includes("?") ? "&" : "?";
@@ -506,11 +635,11 @@ async function fetchISecretaryReport(reportType) {
   try {
     data = JSON.parse(raw);
   } catch (err) {
-    return "ไม่สามารถอ่านข้อมูลรายงานได้";
+    return "ไม่สามารถอ่านข้อมูลรายงานได้ค่ะ คุณสิงห์";
   }
 
-  if (!data.ok) return data.message || "ไม่พบข้อมูลรายงาน";
-  return data.text || "ไม่พบข้อความรายงาน";
+  if (!data.ok) return data.message || "ไม่พบข้อมูลรายงานค่ะ คุณสิงห์";
+  return data.text || "ไม่พบข้อความรายงานค่ะ คุณสิงห์";
 }
 
 async function getSecretaryState(userId) {
@@ -604,19 +733,18 @@ function buildFollowupText(missingFields) {
     location: "สถานที่"
   };
 
-  // ถ้ามี domain อย่างเดียว ให้ถามแบบเป็นธรรมชาติ
   if (missingFields.length === 1 && missingFields[0] === "domain") {
-    return "งานนี้เป็นเรื่อง สมาคม / เทศบาล / ร้านป้าย คะ";
+    return "งานนี้เป็นเรื่อง สมาคม / เทศบาล / ร้านป้าย คะ คุณสิงห์";
   }
 
-  const lines = ["ไอซ์ขอข้อมูลเพิ่มอีกนิดค่ะ", ""];
+  const lines = ["ไอซ์ขอข้อมูลเพิ่มอีกนิดค่ะ คุณสิงห์", ""];
   missingFields.forEach(f => lines.push("- " + (map[f] || f)));
   return lines.join("\n");
 }
 
 function buildSaveSuccessText(saved, parsed) {
   const lines = [
-    "บันทึกเรียบร้อยแล้วค่ะ",
+    "บันทึกเรียบร้อยแล้วค่ะ คุณสิงห์",
     "",
     "ประเภท: " + (parsed.intent === "appointment" ? "นัดหมาย" : "งาน"),
     "หมวดงาน: " + (parsed.domain || "-"),
@@ -633,57 +761,10 @@ function buildSaveSuccessText(saved, parsed) {
 
   if (saved && saved.is_lottery_day) {
     lines.push("");
-    lines.push("หมายเหตุเพิ่มเติม: วันดังกล่าวตรงกับวันหวยออก");
+    lines.push("หมายเหตุเพิ่มเติม: วันดังกล่าวตรงกับวันหวยออกค่ะ คุณสิงห์");
   }
 
   return lines.join("\n");
-}
-
-/* =========================================================
- * SEARCH WEB
- * ========================================================= */
-
-async function searchWebFromApi(query) {
-  const q = String(query || "").trim();
-  if (!q) return "ไอซ์ยังไม่พบคำค้นค่ะ";
-
-  const apiKey = String(process.env.GOOGLE_SEARCH_API_KEY || "").trim();
-  const cseId = String(process.env.GOOGLE_SEARCH_ENGINE_ID || "").trim();
-
-  if (!apiKey || !cseId) {
-    return "ยังไม่ได้ตั้งค่า GOOGLE_SEARCH_API_KEY หรือ GOOGLE_SEARCH_ENGINE_ID";
-  }
-
-  const url =
-    "https://www.googleapis.com/customsearch/v1?key=" +
-    encodeURIComponent(apiKey) +
-    "&cx=" +
-    encodeURIComponent(cseId) +
-    "&q=" +
-    encodeURIComponent(q);
-
-  try {
-    const response = await fetch(url);
-    const data = await response.json();
-
-    const items = data.items || [];
-    if (!items.length) {
-      return "ไอซ์ไม่พบข้อมูลจากอินเทอร์เน็ตค่ะ";
-    }
-
-    const lines = ["ไอซ์หาข้อมูลมาให้แล้วค่ะ", ""];
-    items.slice(0, 3).forEach((item, idx) => {
-      lines.push((idx + 1) + ". " + (item.title || "-"));
-      lines.push(item.link || "-");
-      if (item.snippet) lines.push(item.snippet);
-      lines.push("");
-    });
-
-    return lines.join("\n").trim();
-  } catch (err) {
-    console.error("searchWebFromApi error:", err);
-    return "ค้นข้อมูลจากอินเทอร์เน็ตไม่สำเร็จค่ะ";
-  }
 }
 
 /* =========================================================
