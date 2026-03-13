@@ -58,7 +58,11 @@ async function handleISecretaryCommand(text, userId) {
   const compact = compactText(text);
 
   // รายงานงาน
-  if (compact.includes("งานวันนี้") || compact.includes("วันนี้มีงานอะไร") || compact.includes("มีงานอะไรวันนี้")) {
+  if (
+    compact.includes("งานวันนี้") ||
+    compact.includes("วันนี้มีงานอะไร") ||
+    compact.includes("มีงานอะไรวันนี้")
+  ) {
     return await fetchISecretaryReport("today_tasks");
   }
 
@@ -78,17 +82,31 @@ async function handleISecretaryCommand(text, userId) {
     return await fetchISecretaryReport("task_status_summary");
   }
 
+  // =====================================================
   // รายงานนัดหมายจาก APPOINTMENTS จริง
+  // ห้ามปล่อยให้ไปเข้า GPT ก่อนเด็ดขาด
+  // =====================================================
+
   if (
     compact.includes("วันนี้มีนัดไหม") ||
-    compact.includes("มีนัดไหมวันนี้")
+    compact.includes("มีนัดไหมวันนี้") ||
+    compact.includes("วันนี้มีนัดกี่โมง") ||
+    compact.includes("วันนี้มีนัดเวลาอะไร") ||
+    compact.includes("วันนี้มีนัดที่ไหน") ||
+    compact === "วันนี้มีนัด" ||
+    compact === "มีนัดวันนี้"
   ) {
     return await fetchISecretaryReport("today_appointments");
   }
 
   if (
     compact.includes("พรุ่งนี้มีนัดไหม") ||
-    compact.includes("มีนัดไหมพรุ่งนี้")
+    compact.includes("มีนัดไหมพรุ่งนี้") ||
+    compact.includes("พรุ่งนี้มีนัดกี่โมง") ||
+    compact.includes("พรุ่งนี้มีนัดเวลาอะไร") ||
+    compact.includes("พรุ่งนี้มีนัดที่ไหน") ||
+    compact === "พรุ่งนี้มีนัด" ||
+    compact === "มีนัดพรุ่งนี้"
   ) {
     return await fetchISecretaryReport("tomorrow_appointments");
   }
@@ -112,6 +130,67 @@ async function handleISecretaryCommand(text, userId) {
     compact.includes("มีนัดชนกันไหมพรุ่งนี้")
   ) {
     return await fetchISecretaryReport("clash_tomorrow");
+  }
+
+  // =====================================================
+  // ถ้าเป็นคำถามสั้น follow-up เรื่องนัด ให้ดึงจาก report จริง
+  // กัน AI เดาเอง
+  // =====================================================
+
+  if (
+    compact === "กี่โมง" ||
+    compact === "เวลาอะไร" ||
+    compact === "ที่ไหน" ||
+    compact === "นัดที่ไหน" ||
+    compact === "เรื่องอะไร"
+  ) {
+    const state = await getSecretaryState(userId);
+
+    if (
+      state &&
+      (state.intent === "appointment_query_today" ||
+        state.intent === "appointment_query_tomorrow")
+    ) {
+      if (state.intent === "appointment_query_today") {
+        return await fetchISecretaryReport("today_appointments");
+      }
+      if (state.intent === "appointment_query_tomorrow") {
+        return await fetchISecretaryReport("tomorrow_appointments");
+      }
+    }
+  }
+
+  // =====================================================
+  // คำปฏิเสธ / correction
+  // ถ้ามี state ว่ากำลังถามนัดอยู่ ให้ re-check จากชีตจริง
+  // =====================================================
+
+  if (
+    compact.includes("ไม่ใช่") ||
+    compact.includes("ไม่ได้นัด") ||
+    compact.includes("ไม่มีนัด") ||
+    compact.includes("ผิด") ||
+    compact.includes("เช็กใหม่") ||
+    compact.includes("เช็คใหม่") ||
+    compact.includes("มั่ว")
+  ) {
+    const state = await getSecretaryState(userId);
+
+    if (
+      state &&
+      (state.intent === "appointment_query_today" ||
+        state.intent === "appointment_query_tomorrow")
+    ) {
+      if (state.intent === "appointment_query_today") {
+        return "ขออภัยค่ะ คุณสิงห์\nเดี๋ยวไอซ์ตรวจสอบใหม่จากระบบให้นะคะ\n\n" +
+          await fetchISecretaryReport("today_appointments");
+      }
+
+      if (state.intent === "appointment_query_tomorrow") {
+        return "ขออภัยค่ะ คุณสิงห์\nเดี๋ยวไอซ์ตรวจสอบใหม่จากระบบให้นะคะ\n\n" +
+          await fetchISecretaryReport("tomorrow_appointments");
+      }
+    }
   }
 
   const state = await getSecretaryState(userId);
