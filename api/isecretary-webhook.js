@@ -5,11 +5,11 @@
 
 function normalizeText(text) {
   if (!text) return "";
-  return text
-    .toString()
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
+  return text.toString().trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function compactText(text) {
+  return String(text || "").trim().toLowerCase().replace(/\s+/g, "");
 }
 
 export default async function handler(req, res) {
@@ -55,15 +55,64 @@ export default async function handler(req, res) {
 
 async function handleISecretaryCommand(text, userId) {
   const cmd = normalizeText(text);
+  const compact = compactText(text);
 
-  if (cmd.includes("งานวันนี้")) return await fetchISecretaryReport("today_tasks");
-  if (cmd.includes("งานค้าง")) return await fetchISecretaryReport("overdue_tasks");
-  if (cmd.includes("สรุปวันนี้")) return await fetchISecretaryReport("today_summary");
-  if (cmd.includes("พรุ่งนี้มีนัดไหม") || cmd.includes("พรุ่งนี้มีนัดมั้ย")) {
+  // รายงานงาน
+  if (compact.includes("งานวันนี้") || compact.includes("วันนี้มีงานอะไร") || compact.includes("มีงานอะไรวันนี้")) {
+    return await fetchISecretaryReport("today_tasks");
+  }
+
+  if (compact.includes("งานค้าง")) {
+    return await fetchISecretaryReport("overdue_tasks");
+  }
+
+  if (compact.includes("สรุปวันนี้")) {
+    return await fetchISecretaryReport("today_summary");
+  }
+
+  if (compact.includes("ด่วน")) {
+    return await fetchISecretaryReport("urgent_tasks");
+  }
+
+  if (compact.includes("สถานะงาน")) {
+    return await fetchISecretaryReport("task_status_summary");
+  }
+
+  // รายงานนัดหมายจาก APPOINTMENTS จริง
+  if (
+    compact.includes("วันนี้มีนัดไหม") ||
+    compact.includes("มีนัดไหมวันนี้")
+  ) {
+    return await fetchISecretaryReport("today_appointments");
+  }
+
+  if (
+    compact.includes("พรุ่งนี้มีนัดไหม") ||
+    compact.includes("มีนัดไหมพรุ่งนี้")
+  ) {
     return await fetchISecretaryReport("tomorrow_appointments");
   }
-  if (cmd.includes("ด่วน")) return await fetchISecretaryReport("urgent_tasks");
-  if (cmd.includes("สถานะงาน")) return await fetchISecretaryReport("task_status_summary");
+
+  if (
+    compact.includes("พรุ่งนี้ว่างไหม") ||
+    compact.includes("วันพรุ่งนี้ว่างไหม")
+  ) {
+    return await fetchISecretaryReport("free_tomorrow");
+  }
+
+  if (
+    compact.includes("วันนี้มีนัดชนกันไหม") ||
+    compact.includes("มีนัดชนกันไหมวันนี้")
+  ) {
+    return await fetchISecretaryReport("clash_today");
+  }
+
+  if (
+    compact.includes("พรุ่งนี้มีนัดชนกันไหม") ||
+    compact.includes("มีนัดชนกันไหมพรุ่งนี้")
+  ) {
+    return await fetchISecretaryReport("clash_tomorrow");
+  }
 
   const state = await getSecretaryState(userId);
 
@@ -94,8 +143,6 @@ async function handleISecretaryCommand(text, userId) {
         priority: inferPriority(text, mergedDirect)
       });
 
-      console.log("ISECRETARY SAVE RESULT (DIRECT DOMAIN):", JSON.stringify(savedDirect));
-
       if (!savedDirect.ok) {
         return "บันทึกไม่สำเร็จค่ะ คุณสิงห์: " + (savedDirect.message || "unknown error");
       }
@@ -107,10 +154,8 @@ async function handleISecretaryCommand(text, userId) {
     const followupParsed = await parseWithGPT(text);
     followupParsed.domain = inferDomainFromTextAndParsed(text, followupParsed, state.domain || "");
     followupParsed.priority = inferPriority(text, followupParsed);
-    console.log("ISECRETARY FOLLOWUP PARSED:", JSON.stringify(followupParsed));
 
     const merged = await mergeSecretaryState(userId, followupParsed, text);
-    console.log("ISECRETARY MERGED STATE RESULT:", JSON.stringify(merged));
 
     if (!merged.ok) {
       return "ไอซ์รวมข้อมูลต่อไม่สำเร็จค่ะ คุณสิงห์";
@@ -139,8 +184,6 @@ async function handleISecretaryCommand(text, userId) {
       raw_text: text
     });
 
-    console.log("ISECRETARY SAVE RESULT (STATE FLOW):", JSON.stringify(saved));
-
     if (!saved.ok) {
       return "บันทึกไม่สำเร็จค่ะ คุณสิงห์: " + (saved.message || "unknown error");
     }
@@ -152,7 +195,6 @@ async function handleISecretaryCommand(text, userId) {
   const parsed = await parseWithGPT(text);
   parsed.domain = inferDomainFromTextAndParsed(text, parsed, "");
   parsed.priority = inferPriority(text, parsed);
-  console.log("ISECRETARY PARSED OBJECT:", JSON.stringify(parsed));
 
   if (!parsed.intent) {
     return "ไอซ์ยังตีความไม่สำเร็จค่ะ ลองพิมพ์ใหม่อีกนิดนะคะ คุณสิงห์";
@@ -181,8 +223,6 @@ async function handleISecretaryCommand(text, userId) {
     user_id: userId,
     raw_text: text
   });
-
-  console.log("ISECRETARY SAVE RESULT:", JSON.stringify(saved));
 
   if (!saved.ok) {
     return "บันทึกไม่สำเร็จค่ะ คุณสิงห์: " + (saved.message || "unknown error");
@@ -269,8 +309,6 @@ reply_text
       body.response_format = { type: "json_object" };
     }
 
-    console.log("ISECRETARY OPENAI MODEL:", model);
-
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -281,11 +319,7 @@ reply_text
     });
 
     const data = await response.json();
-    console.log("ISECRETARY OPENAI RESPONSE:", JSON.stringify(data));
-
     const content = data?.choices?.[0]?.message?.content || "";
-    console.log("ISECRETARY GPT RAW CONTENT:", content);
-
     const parsed = parseJsonSafely(content);
     return normalizeParsedObject(parsed);
   } catch (err) {
@@ -422,7 +456,7 @@ function inferDomainFromTextAndParsed(text, parsed, fallbackDomain) {
 }
 
 function mapShortDomainAnswer(text) {
-  const t = normalizeText(text);
+  const t = compactText(text);
 
   if (t === "สมาคม" || t === "สมาคมนักธุรกิจ") return "สมาคมนักธุรกิจ";
   if (t === "เทศบาล" || t === "เทศบาลเขาชีจรรย์" || t === "เขาชีจรรย์") return "เทศบาลเขาชีจรรย์";
@@ -483,11 +517,8 @@ async function fetchISecretaryReport(reportType) {
   const joinChar = apiBase.includes("?") ? "&" : "?";
   const url = `${apiBase}${joinChar}report=${encodeURIComponent(reportType)}`;
 
-  console.log("ISECRETARY FETCH REPORT URL:", url);
-
   const response = await fetch(url, { method: "GET", redirect: "follow" });
   const raw = await response.text();
-  console.log("ISECRETARY FETCH REPORT RAW:", raw);
 
   let data = {};
   try {
@@ -573,7 +604,6 @@ async function saveSecretaryRecord(payload) {
   });
 
   const data = await response.json();
-  console.log("ISECRETARY SAVE RECORD RESPONSE:", JSON.stringify(data));
   return data;
 }
 
