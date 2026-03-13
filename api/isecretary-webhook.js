@@ -3,6 +3,15 @@
  * ใช้เฉพาะ LINE OA iSecretary
  *************************************************/
 
+function normalizeText(text) {
+  if (!text) return "";
+  return text
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(200).send("isecretary webhook ready");
@@ -47,7 +56,6 @@ export default async function handler(req, res) {
 async function handleISecretaryCommand(text, userId) {
   const cmd = normalizeText(text);
 
-  // รายงาน
   if (cmd.includes("งานวันนี้")) return await fetchISecretaryReport("today_tasks");
   if (cmd.includes("งานค้าง")) return await fetchISecretaryReport("overdue_tasks");
   if (cmd.includes("สรุปวันนี้")) return await fetchISecretaryReport("today_summary");
@@ -57,13 +65,11 @@ async function handleISecretaryCommand(text, userId) {
   if (cmd.includes("ด่วน")) return await fetchISecretaryReport("urgent_tasks");
   if (cmd.includes("สถานะงาน")) return await fetchISecretaryReport("task_status_summary");
 
-  // ถ้ามี state ค้างอยู่ ให้จัดการก่อน
   const state = await getSecretaryState(userId);
 
   if (state) {
     console.log("ISECRETARY FOUND STATE:", JSON.stringify(state));
 
-    // ตอบสั้น ๆ เฉพาะหมวดงาน
     const directDomain = mapShortDomainAnswer(text);
     if (directDomain) {
       const mergedDirect = {
@@ -143,7 +149,6 @@ async function handleISecretaryCommand(text, userId) {
     return buildSaveSuccessText(saved, merged.merged);
   }
 
-  // parse ใหม่
   const parsed = await parseWithGPT(text);
   parsed.domain = inferDomainFromTextAndParsed(text, parsed, "");
   parsed.priority = inferPriority(text, parsed);
