@@ -54,10 +54,11 @@ export default async function handler(req, res) {
  * ========================================================= */
 
 async function handleISecretaryCommand(text, userId) {
-  const cmd = normalizeText(text);
   const compact = compactText(text);
 
-  // รายงานงาน
+  // ------------------------------
+  // งานจาก TASKS
+  // ------------------------------
   if (
     compact.includes("งานวันนี้") ||
     compact.includes("วันนี้มีงานอะไร") ||
@@ -82,32 +83,54 @@ async function handleISecretaryCommand(text, userId) {
     return await fetchISecretaryReport("task_status_summary");
   }
 
-  // =====================================================
-  // รายงานนัดหมายจาก APPOINTMENTS จริง
-  // ห้ามปล่อยให้ไปเข้า GPT ก่อนเด็ดขาด
-  // =====================================================
-
+  // ------------------------------
+  // นัดหมายจาก APPOINTMENTS
+  // ตอบจากชีตเท่านั้น ห้ามปล่อยไป GPT
+  // ------------------------------
   if (
-    compact.includes("วันนี้มีนัดไหม") ||
-    compact.includes("มีนัดไหมวันนี้") ||
-    compact.includes("วันนี้มีนัดกี่โมง") ||
-    compact.includes("วันนี้มีนัดเวลาอะไร") ||
-    compact.includes("วันนี้มีนัดที่ไหน") ||
+    compact === "มีนัดไหม" ||
+    compact === "วันนี้มีนัดไหม" ||
+    compact === "มีนัดไหมวันนี้" ||
     compact === "วันนี้มีนัด" ||
-    compact === "มีนัดวันนี้"
+    compact === "มีนัดวันนี้" ||
+    compact === "วันนี้มีนัดกี่โมง" ||
+    compact === "วันนี้มีนัดเวลาอะไร" ||
+    compact === "วันนี้มีนัดที่ไหน"
   ) {
+    await saveSecretaryState(userId, {
+      intent: "appointment_query_today",
+      domain: "",
+      date: "",
+      time: "",
+      detail: "",
+      location: "",
+      note: "",
+      missing_fields: [],
+      priority: "NORMAL"
+    });
     return await fetchISecretaryReport("today_appointments");
   }
 
   if (
-    compact.includes("พรุ่งนี้มีนัดไหม") ||
-    compact.includes("มีนัดไหมพรุ่งนี้") ||
-    compact.includes("พรุ่งนี้มีนัดกี่โมง") ||
-    compact.includes("พรุ่งนี้มีนัดเวลาอะไร") ||
-    compact.includes("พรุ่งนี้มีนัดที่ไหน") ||
+    compact === "พรุ่งนี้มีนัดไหม" ||
+    compact === "มีนัดไหมพรุ่งนี้" ||
     compact === "พรุ่งนี้มีนัด" ||
-    compact === "มีนัดพรุ่งนี้"
+    compact === "มีนัดพรุ่งนี้" ||
+    compact === "พรุ่งนี้มีนัดกี่โมง" ||
+    compact === "พรุ่งนี้มีนัดเวลาอะไร" ||
+    compact === "พรุ่งนี้มีนัดที่ไหน"
   ) {
+    await saveSecretaryState(userId, {
+      intent: "appointment_query_tomorrow",
+      domain: "",
+      date: "",
+      time: "",
+      detail: "",
+      location: "",
+      note: "",
+      missing_fields: [],
+      priority: "NORMAL"
+    });
     return await fetchISecretaryReport("tomorrow_appointments");
   }
 
@@ -132,11 +155,9 @@ async function handleISecretaryCommand(text, userId) {
     return await fetchISecretaryReport("clash_tomorrow");
   }
 
-  // =====================================================
-  // ถ้าเป็นคำถามสั้น follow-up เรื่องนัด ให้ดึงจาก report จริง
-  // กัน AI เดาเอง
-  // =====================================================
-
+  // ------------------------------
+  // follow-up นัด
+  // ------------------------------
   if (
     compact === "กี่โมง" ||
     compact === "เวลาอะไร" ||
@@ -146,25 +167,18 @@ async function handleISecretaryCommand(text, userId) {
   ) {
     const state = await getSecretaryState(userId);
 
-    if (
-      state &&
-      (state.intent === "appointment_query_today" ||
-        state.intent === "appointment_query_tomorrow")
-    ) {
-      if (state.intent === "appointment_query_today") {
-        return await fetchISecretaryReport("today_appointments");
-      }
-      if (state.intent === "appointment_query_tomorrow") {
-        return await fetchISecretaryReport("tomorrow_appointments");
-      }
+    if (state && state.intent === "appointment_query_today") {
+      return await fetchISecretaryReport("today_appointments");
+    }
+
+    if (state && state.intent === "appointment_query_tomorrow") {
+      return await fetchISecretaryReport("tomorrow_appointments");
     }
   }
 
-  // =====================================================
-  // คำปฏิเสธ / correction
-  // ถ้ามี state ว่ากำลังถามนัดอยู่ ให้ re-check จากชีตจริง
-  // =====================================================
-
+  // ------------------------------
+  // correction
+  // ------------------------------
   if (
     compact.includes("ไม่ใช่") ||
     compact.includes("ไม่ได้นัด") ||
@@ -176,28 +190,23 @@ async function handleISecretaryCommand(text, userId) {
   ) {
     const state = await getSecretaryState(userId);
 
-    if (
-      state &&
-      (state.intent === "appointment_query_today" ||
-        state.intent === "appointment_query_tomorrow")
-    ) {
-      if (state.intent === "appointment_query_today") {
-        return "ขออภัยค่ะ คุณสิงห์\nเดี๋ยวไอซ์ตรวจสอบใหม่จากระบบให้นะคะ\n\n" +
-          await fetchISecretaryReport("today_appointments");
-      }
+    if (state && state.intent === "appointment_query_today") {
+      return "ขออภัยค่ะ คุณสิงห์\nเดี๋ยวไอซ์ตรวจสอบใหม่จากระบบให้นะคะ\n\n" +
+        await fetchISecretaryReport("today_appointments");
+    }
 
-      if (state.intent === "appointment_query_tomorrow") {
-        return "ขออภัยค่ะ คุณสิงห์\nเดี๋ยวไอซ์ตรวจสอบใหม่จากระบบให้นะคะ\n\n" +
-          await fetchISecretaryReport("tomorrow_appointments");
-      }
+    if (state && state.intent === "appointment_query_tomorrow") {
+      return "ขออภัยค่ะ คุณสิงห์\nเดี๋ยวไอซ์ตรวจสอบใหม่จากระบบให้นะคะ\n\n" +
+        await fetchISecretaryReport("tomorrow_appointments");
     }
   }
 
+  // ------------------------------
+  // ส่วนล่างค่อยเข้า GPT
+  // ------------------------------
   const state = await getSecretaryState(userId);
 
   if (state) {
-    console.log("ISECRETARY FOUND STATE:", JSON.stringify(state));
-
     const directDomain = mapShortDomainAnswer(text);
     if (directDomain) {
       const mergedDirect = {
@@ -355,20 +364,6 @@ location
 note
 missing_fields
 reply_text
-
-กติกา:
-- "วันนี้" = ${todayISO}
-- "พรุ่งนี้" = ${tomorrowISO}
-- "เมื่อวาน" = ${yesterdayISO}
-- date ต้องเป็น YYYY-MM-DD
-- time ต้องเป็น HH:MM ถ้าระบุเวลาได้
-- ถ้าไม่แน่ใจให้ใส่ ""
-- ถ้าข้อมูลไม่ครบให้ใส่ชื่อ field ใน missing_fields
-- missing_fields ต้องเป็น array เสมอ
-- ถ้าเป็น chat ให้ใส่ reply_text แบบสุภาพ เป็นกันเอง
-- ถ้าข้อความมีคำว่า ประชุม นัด เจอ คุย เข้าพบ ดูหน้างาน ให้พิจารณาเป็น appointment ก่อน
-- ถ้าข้อความมีคำว่า เตือน ฝากงาน โทรตาม ส่งของ เช็กแบบ ทำป้าย ให้พิจารณาเป็น task ก่อน
-- ถ้าเดา domain ไม่ได้ ให้ใส่ ""
 `;
 
     const body = {
@@ -423,16 +418,7 @@ async function buildChatReply(text) {
 
     const prompt = `
 คุณคือ "ไอซ์" เลขาส่วนตัวของ "คุณสิงห์"
-
-บุคลิก:
-- สุภาพ
-- เป็นกันเอง
-- ใช้คำลงท้ายว่า "ค่ะ คุณสิงห์" เมื่อเหมาะสม
-- คุยเหมือนเลขาส่วนตัวจริง
-- ช่วยคิด ช่วยเตือน ช่วยจัดระเบียบงาน
-- ตอบกระชับ อ่านง่าย
-
-ห้ามอ้างว่าทำสิ่งที่ระบบยังทำไม่ได้
+ตอบกระชับ สุภาพ และห้ามอ้างข้อมูลที่ไม่มีในระบบ
 `;
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -513,34 +499,18 @@ function inferDomainFromTextAndParsed(text, parsed, fallbackDomain) {
   const location = String(parsed?.location || "").toLowerCase();
   const all = [sourceText, detail, location].join(" ");
 
-  if (all.includes("สมาคม") || all.includes("นักธุรกิจ")) {
-    return "สมาคมนักธุรกิจ";
-  }
-
-  if (all.includes("เทศบาล") || all.includes("เขาชีจรรย์") || all.includes("ชุมชน")) {
-    return "เทศบาลเขาชีจรรย์";
-  }
-
-  if (
-    all.includes("ร้านป้าย") ||
-    all.includes("ป้าย") ||
-    all.includes("ลูกค้า") ||
-    all.includes("ติดตั้ง") ||
-    all.includes("ผลิต")
-  ) {
-    return "ร้านป้าย";
-  }
+  if (all.includes("สมาคม") || all.includes("นักธุรกิจ")) return "สมาคมนักธุรกิจ";
+  if (all.includes("เทศบาล") || all.includes("เขาชีจรรย์") || all.includes("ชุมชน")) return "เทศบาลเขาชีจรรย์";
+  if (all.includes("ร้านป้าย") || all.includes("ป้าย") || all.includes("ลูกค้า") || all.includes("ติดตั้ง") || all.includes("ผลิต")) return "ร้านป้าย";
 
   return String(fallbackDomain || "").trim();
 }
 
 function mapShortDomainAnswer(text) {
   const t = compactText(text);
-
   if (t === "สมาคม" || t === "สมาคมนักธุรกิจ") return "สมาคมนักธุรกิจ";
   if (t === "เทศบาล" || t === "เทศบาลเขาชีจรรย์" || t === "เขาชีจรรย์") return "เทศบาลเขาชีจรรย์";
   if (t === "ร้านป้าย" || t === "ป้าย") return "ร้านป้าย";
-
   return "";
 }
 
@@ -682,8 +652,7 @@ async function saveSecretaryRecord(payload) {
     })
   });
 
-  const data = await response.json();
-  return data;
+  return await response.json();
 }
 
 /* =========================================================
