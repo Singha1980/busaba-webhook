@@ -778,22 +778,37 @@ function buildFollowupText(missingFields) {
 }
 
 function buildSaveSuccessText(saved, parsed) {
-  const lines = [
-    "บันทึกเรียบร้อยแล้วค่ะ คุณสิงห์",
-    "",
-    "ประเภท: " + (parsed.intent === "appointment" ? "นัดหมาย" : "งาน"),
-    "หมวดงาน: " + (parsed.domain || "-"),
-    "วันที่: " + (parsed.date || "-"),
-    "เวลา: " + (parsed.time || "-"),
-    "รายละเอียด: " + (parsed.detail || "-"),
-    "สถานที่: " + (parsed.location || "-"),
-    "หมายเหตุ: " + (parsed.note || "-")
-  ];
+
+  const isAppointment = parsed.intent === "appointment";
+
+  const lines = [];
+
+  if (isAppointment) {
+    lines.push("บันทึกนัดหมายเรียบร้อยแล้วค่ะ คุณสิงห์");
+  } else {
+    lines.push("บันทึกเป็นโน้ตเรียบร้อยแล้วค่ะ คุณสิงห์");
+  }
+
+  lines.push("");
+  lines.push("ประเภท: " + (isAppointment ? "นัดหมาย" : "โน้ต"));
+  lines.push("หมวดงาน: " + (parsed.domain || "-"));
+  lines.push("วันที่: " + (parsed.date || "-"));
+  lines.push("เวลา: " + (parsed.time || "-"));
+  lines.push("รายละเอียด: " + (parsed.detail || "-"));
+  lines.push("สถานที่: " + (parsed.location || "-"));
+  lines.push("หมายเหตุ: " + (parsed.note || "-"));
+
+  if (!isAppointment) {
+    lines.push("");
+    lines.push("หากต้องการเปิดงานร้านป้าย");
+    lines.push("กรุณากรอกผ่านฟอร์ม Busaba");
+  }
 
   if (parsed.priority === "HIGH") {
     lines.push("ระดับความสำคัญ: ด่วน");
   }
 
+  // 🔔 เตือนวันหวยออก (คงไว้เหมือนเดิม)
   if (saved && saved.is_lottery_day) {
     lines.push("");
     lines.push("หมายเหตุเพิ่มเติม: วันดังกล่าวตรงกับวันหวยออกค่ะ คุณสิงห์");
@@ -801,7 +816,6 @@ function buildSaveSuccessText(saved, parsed) {
 
   return lines.join("\n");
 }
-
 /* =========================================================
  * DATE HELPERS
  * ========================================================= */
