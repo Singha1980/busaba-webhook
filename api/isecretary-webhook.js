@@ -50,44 +50,79 @@ export default async function handler(req, res) {
 }
 
 /* =========================================================
- * ISECRETARY MAIN
+ * INTENT ROUTER
  * ========================================================= */
 
-async function handleISecretaryCommand(text, userId) {
+function detectISecretaryIntent(text) {
   const compact = compactText(text);
+  const spaced = normalizeText(text);
 
   // ------------------------------
-  // งานจาก TASKS
+  // งานวันนี้
   // ------------------------------
   if (
-  compact.includes("งานวันนี้") ||
-  compact.includes("วันนี้มีงานอะไร") ||
-  compact.includes("มีงานอะไรวันนี้") ||
-  compact.includes("วันนี้มีงานกี่งาน") ||
-  compact.includes("งานวันนี้กี่งาน")
-) {
-  return await fetchISecretaryReport("today_tasks");
-}
-
-  if (compact.includes("งานค้าง")) {
-    return await fetchISecretaryReport("overdue_tasks");
-  }
-
-  if (compact.includes("สรุปวันนี้")) {
-    return await fetchISecretaryReport("today_summary");
-  }
-
-  if (compact.includes("ด่วน")) {
-    return await fetchISecretaryReport("urgent_tasks");
-  }
-
-  if (compact.includes("สถานะงาน")) {
-    return await fetchISecretaryReport("task_status_summary");
+    compact.includes("งานวันนี้") ||
+    compact.includes("วันนี้มีงานอะไร") ||
+    compact.includes("มีงานอะไรวันนี้") ||
+    compact.includes("วันนี้มีงานกี่งาน") ||
+    compact.includes("งานวันนี้กี่งาน") ||
+    compact.includes("วันนี้ต้องทำอะไร") ||
+    compact.includes("วันนี้มีอะไรต้องทำ") ||
+    compact.includes("มีอะไรต้องทำวันนี้") ||
+    compact.includes("วันนี้มีงานไหม")
+  ) {
+    return "today_tasks";
   }
 
   // ------------------------------
-  // นัดหมายจาก APPOINTMENTS
-  // ตอบจากชีตเท่านั้น ห้ามปล่อยไป GPT
+  // งานค้าง
+  // ------------------------------
+  if (
+    compact.includes("งานค้าง") ||
+    compact.includes("มีงานค้างไหม") ||
+    compact.includes("งานค้างกี่งาน") ||
+    compact.includes("งานค้างเหลือกี่งาน") ||
+    compact.includes("งานที่ยังไม่เสร็จ") ||
+    compact.includes("มีงานที่ยังไม่เสร็จไหม")
+  ) {
+    return "overdue_tasks";
+  }
+
+  // ------------------------------
+  // งานด่วน / ใกล้กำหนด
+  // ------------------------------
+  if (
+    compact.includes("งานด่วน") ||
+    compact.includes("งานใกล้กำหนด") ||
+    compact.includes("งานใกล้ส่ง") ||
+    compact.includes("มีงานด่วนไหม")
+  ) {
+    return "urgent_tasks";
+  }
+
+  // ------------------------------
+  // สถานะงานรวม
+  // ------------------------------
+  if (
+    compact.includes("สถานะงาน") ||
+    compact.includes("สรุปสถานะงาน") ||
+    compact.includes("งานตอนนี้เป็นยังไงบ้าง")
+  ) {
+    return "task_status_summary";
+  }
+
+  // ------------------------------
+  // สรุปวันนี้
+  // ------------------------------
+  if (
+    compact.includes("สรุปวันนี้") ||
+    compact.includes("วันนี้สรุปอะไรบ้าง")
+  ) {
+    return "today_summary";
+  }
+
+  // ------------------------------
+  // นัดวันนี้
   // ------------------------------
   if (
     compact === "มีนัดไหม" ||
@@ -97,22 +132,15 @@ async function handleISecretaryCommand(text, userId) {
     compact === "มีนัดวันนี้" ||
     compact === "วันนี้มีนัดกี่โมง" ||
     compact === "วันนี้มีนัดเวลาอะไร" ||
-    compact === "วันนี้มีนัดที่ไหน"
+    compact === "วันนี้มีนัดที่ไหน" ||
+    compact === "วันนี้ว่างไหม"
   ) {
-    await saveSecretaryState(userId, {
-      intent: "appointment_query_today",
-      domain: "",
-      date: "",
-      time: "",
-      detail: "",
-      location: "",
-      note: "",
-      missing_fields: [],
-      priority: "NORMAL"
-    });
-    return await fetchISecretaryReport("today_appointments");
+    return "today_appointments";
   }
 
+  // ------------------------------
+  // นัดพรุ่งนี้
+  // ------------------------------
   if (
     compact === "พรุ่งนี้มีนัดไหม" ||
     compact === "มีนัดไหมพรุ่งนี้" ||
@@ -122,39 +150,31 @@ async function handleISecretaryCommand(text, userId) {
     compact === "พรุ่งนี้มีนัดเวลาอะไร" ||
     compact === "พรุ่งนี้มีนัดที่ไหน"
   ) {
-    await saveSecretaryState(userId, {
-      intent: "appointment_query_tomorrow",
-      domain: "",
-      date: "",
-      time: "",
-      detail: "",
-      location: "",
-      note: "",
-      missing_fields: [],
-      priority: "NORMAL"
-    });
-    return await fetchISecretaryReport("tomorrow_appointments");
+    return "tomorrow_appointments";
   }
 
   if (
     compact.includes("พรุ่งนี้ว่างไหม") ||
     compact.includes("วันพรุ่งนี้ว่างไหม")
   ) {
-    return await fetchISecretaryReport("free_tomorrow");
+    return "free_tomorrow";
   }
 
+  // ------------------------------
+  // นัดชนกัน
+  // ------------------------------
   if (
     compact.includes("วันนี้มีนัดชนกันไหม") ||
     compact.includes("มีนัดชนกันไหมวันนี้")
   ) {
-    return await fetchISecretaryReport("clash_today");
+    return "clash_today";
   }
 
   if (
     compact.includes("พรุ่งนี้มีนัดชนกันไหม") ||
     compact.includes("มีนัดชนกันไหมพรุ่งนี้")
   ) {
-    return await fetchISecretaryReport("clash_tomorrow");
+    return "clash_tomorrow";
   }
 
   // ------------------------------
@@ -167,15 +187,7 @@ async function handleISecretaryCommand(text, userId) {
     compact === "นัดที่ไหน" ||
     compact === "เรื่องอะไร"
   ) {
-    const state = await getSecretaryState(userId);
-
-    if (state && state.intent === "appointment_query_today") {
-      return await fetchISecretaryReport("today_appointments");
-    }
-
-    if (state && state.intent === "appointment_query_tomorrow") {
-      return await fetchISecretaryReport("tomorrow_appointments");
-    }
+    return "appointment_followup";
   }
 
   // ------------------------------
@@ -190,6 +202,94 @@ async function handleISecretaryCommand(text, userId) {
     compact.includes("เช็คใหม่") ||
     compact.includes("มั่ว")
   ) {
+    return "appointment_recheck";
+  }
+
+  return "";
+}
+
+/* =========================================================
+ * ISECRETARY MAIN
+ * ========================================================= */
+
+async function handleISecretaryCommand(text, userId) {
+  const intent = detectISecretaryIntent(text);
+
+  if (intent === "today_tasks") {
+    return await fetchISecretaryReport("today_tasks");
+  }
+
+  if (intent === "overdue_tasks") {
+    return await fetchISecretaryReport("overdue_tasks");
+  }
+
+  if (intent === "urgent_tasks") {
+    return await fetchISecretaryReport("urgent_tasks");
+  }
+
+  if (intent === "task_status_summary") {
+    return await fetchISecretaryReport("task_status_summary");
+  }
+
+  if (intent === "today_summary") {
+    return await fetchISecretaryReport("today_summary");
+  }
+
+  if (intent === "today_appointments") {
+    await saveSecretaryState(userId, {
+      intent: "appointment_query_today",
+      domain: "",
+      date: "",
+      time: "",
+      detail: "",
+      location: "",
+      note: "",
+      missing_fields: [],
+      priority: "NORMAL"
+    });
+    return await fetchISecretaryReport("today_appointments");
+  }
+
+  if (intent === "tomorrow_appointments") {
+    await saveSecretaryState(userId, {
+      intent: "appointment_query_tomorrow",
+      domain: "",
+      date: "",
+      time: "",
+      detail: "",
+      location: "",
+      note: "",
+      missing_fields: [],
+      priority: "NORMAL"
+    });
+    return await fetchISecretaryReport("tomorrow_appointments");
+  }
+
+  if (intent === "free_tomorrow") {
+    return await fetchISecretaryReport("free_tomorrow");
+  }
+
+  if (intent === "clash_today") {
+    return await fetchISecretaryReport("clash_today");
+  }
+
+  if (intent === "clash_tomorrow") {
+    return await fetchISecretaryReport("clash_tomorrow");
+  }
+
+  if (intent === "appointment_followup") {
+    const state = await getSecretaryState(userId);
+
+    if (state && state.intent === "appointment_query_today") {
+      return await fetchISecretaryReport("today_appointments");
+    }
+
+    if (state && state.intent === "appointment_query_tomorrow") {
+      return await fetchISecretaryReport("tomorrow_appointments");
+    }
+  }
+
+  if (intent === "appointment_recheck") {
     const state = await getSecretaryState(userId);
 
     if (state && state.intent === "appointment_query_today") {
@@ -203,9 +303,6 @@ async function handleISecretaryCommand(text, userId) {
     }
   }
 
-  // ------------------------------
-  // ส่วนล่างค่อยเข้า GPT
-  // ------------------------------
   const state = await getSecretaryState(userId);
 
   if (state) {
