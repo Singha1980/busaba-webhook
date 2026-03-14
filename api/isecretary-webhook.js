@@ -60,12 +60,14 @@ async function handleISecretaryCommand(text, userId) {
   // งานจาก TASKS
   // ------------------------------
   if (
-    compact.includes("งานวันนี้") ||
-    compact.includes("วันนี้มีงานอะไร") ||
-    compact.includes("มีงานอะไรวันนี้")
-  ) {
-    return await fetchISecretaryReport("today_tasks");
-  }
+  compact.includes("งานวันนี้") ||
+  compact.includes("วันนี้มีงานอะไร") ||
+  compact.includes("มีงานอะไรวันนี้") ||
+  compact.includes("วันนี้มีงานกี่งาน") ||
+  compact.includes("งานวันนี้กี่งาน")
+) {
+  return await fetchISecretaryReport("today_tasks");
+}
 
   if (compact.includes("งานค้าง")) {
     return await fetchISecretaryReport("overdue_tasks");
