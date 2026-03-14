@@ -212,6 +212,48 @@ function detectISecretaryIntent(text) {
  * ISECRETARY MAIN
  * ========================================================= */
 
+function sanitizeParsedForStructuredSave_(rawText, parsed) {
+  const text = String(rawText || "").trim();
+  const result = { ...parsed };
+
+  // ห้ามเดา location ถ้าข้อความต้นฉบับไม่มี location ชัดเจน
+  const hasExplicitLocation =
+    /ที่|สถานที่|สำนักงาน|ออฟฟิศ|เทศบาล|สมาคม|ร้าน|โรงแรม|ห้องประชุม/.test(text);
+
+  // แต่ถ้าคำว่า เทศบาล/สมาคม/ร้านป้าย ถูกใช้เป็นหมวดงาน
+  // ไม่ให้ยกไปเป็น location อัตโนมัติ
+  if (!/ที่|สถานที่|สำนักงาน|ออฟฟิศ|โรงแรม|ห้องประชุม/.test(text)) {
+    result.location = "";
+  } else if (!hasExplicitLocation) {
+    result.location = "";
+  }
+
+  // ห้ามเดา note
+  result.note = "";
+
+  // ถ้า detail ที่ GPT สร้างไม่ได้ใกล้เคียงกับข้อความจริง ให้ใช้ข้อความจริงแบบปลอดภัย
+  const compactRaw = text.replace(/\s+/g, "");
+  const compactDetail = String(result.detail || "").replace(/\s+/g, "");
+
+  if (!compactDetail || compactRaw.indexOf(compactDetail) === -1) {
+    // สร้าง detail แบบ conservative จากข้อความจริง
+    result.detail = text;
+  }
+
+  // ถ้าเป็น appointment แล้วมี domain แต่ detail ยังยาวเกิน/แต่งเกิน
+  // ให้เก็บ detail ตามข้อความจริงเท่านั้น
+  if (result.intent === "appointment") {
+    result.detail = text;
+  }
+
+  // ถ้าเป็น task/note ก็ใช้ข้อความจริง
+  if (result.intent === "task") {
+    result.detail = text;
+  }
+
+  return result;
+}
+
 async function handleISecretaryCommand(text, userId) {
   const intent = detectISecretaryIntent(text);
 
