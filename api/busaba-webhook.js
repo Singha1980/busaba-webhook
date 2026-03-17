@@ -1,7 +1,73 @@
 /*************************************************
  * BUSABA WEBHOOK
- * ใช้เฉพาะ LINE OA Busaba
+ * ใช้สำหรับ LINE OA Busaba
+ * - คำสั่งภายในออฟฟิศ
+ * - ตอบลิงก์ฟอร์มสำหรับเปิดงาน
  *************************************************/
+
+function normalizeText(text) {
+  if (!text) return "";
+  return String(text).trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function compactText(text) {
+  return String(text || "").trim().toLowerCase().replace(/\s+/g, "");
+}
+
+function detectBusabaCommand(text) {
+  const compact = compactText(text);
+
+  if (
+    compact === "#งานค้าง" ||
+    compact === "งานค้าง" ||
+    compact === "#มีงานค้างไหม" ||
+    compact === "มีงานค้างไหม"
+  ) {
+    return "overdue_tasks";
+  }
+
+  if (
+    compact === "#งานวันนี้" ||
+    compact === "งานวันนี้" ||
+    compact === "#วันนี้มีงานอะไร" ||
+    compact === "วันนี้มีงานอะไร" ||
+    compact === "#วันนี้มีงานกี่งาน" ||
+    compact === "วันนี้มีงานกี่งาน" ||
+    compact === "#งานวันนี้กี่งาน" ||
+    compact === "งานวันนี้กี่งาน"
+  ) {
+    return "today_tasks";
+  }
+
+  if (
+    compact === "#งานด่วน" ||
+    compact === "งานด่วน" ||
+    compact === "#มีงานด่วนไหม" ||
+    compact === "มีงานด่วนไหม" ||
+    compact === "#งานใกล้ส่ง" ||
+    compact === "งานใกล้ส่ง"
+  ) {
+    return "urgent_tasks";
+  }
+
+  if (
+    compact === "#สถานะงาน" ||
+    compact === "สถานะงาน" ||
+    compact === "#สรุปสถานะงาน" ||
+    compact === "สรุปสถานะงาน"
+  ) {
+    return "task_status_summary";
+  }
+
+  if (
+    compact === "#สรุปวันนี้" ||
+    compact === "สรุปวันนี้"
+  ) {
+    return "today_summary";
+  }
+
+  return "";
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -17,19 +83,17 @@ export default async function handler(req, res) {
       if (event.message.type !== "text") continue;
 
       const text = String(event.message.text || "").trim();
-      const userId = event.source?.userId || "";
 
       console.log("BUSABA TEXT:", text);
-      console.log("BUSABA USER:", userId);
 
-      const replyText = await handleBusabaCommand(text, userId);
+      const replyText = await handleBusabaCommand(text);
 
       console.log("BUSABA REPLY:", replyText);
 
       await replyLineMessage(
         event.replyToken,
         replyText,
-        String(process.env.LINE_ACCESS_TOKEN || "").trim()
+        String(process.env.LINE_ACCESS_TOKEN_BUSABA || process.env.LINE_ACCESS_TOKEN || "").trim()
       );
     }
 
@@ -40,150 +104,69 @@ export default async function handler(req, res) {
   }
 }
 
-/* =========================================================
- * BUSABA COMMANDS
- * ========================================================= */
+async function handleBusabaCommand(text) {
+  const reportType = detectBusabaCommand(text);
 
-async function handleBusabaCommand(text, userId) {
-  const lower = String(text || "").trim().toLowerCase();
-
-  if (text === "เมนู" || lower === "menu") {
-    return buildBusabaMenuText();
+  if (reportType) {
+    return await fetchBusabaReport(reportType);
   }
 
-  if (text === "เปิดงาน") {
-    return [
-      "กรอกข้อมูลเปิดงานใหม่ได้ที่นี่ครับ",
-      String(process.env.BUSABA_FORM_URL || "ยังไม่ได้ตั้งค่า BUSABA_FORM_URL").trim()
-    ].join("\n");
-  }
+  const formUrl = String(
+    process.env.BUSABA_FORM_URL ||
+    process.env.FORM_URL ||
+    "https://docs.google.com/forms/d/e/1FAIpQLScCnZxb5pdwo4VZMjXtZeCBLn8Zl-qAk5df8B1CAZnzYgdQ6A/viewform"
+  ).trim();
 
-  if (lower === "dashboard") {
-    return [
-      "ดู Dashboard ได้ที่",
-      String(process.env.BUSABA_DASHBOARD_URL || "ยังไม่ได้ตั้งค่า BUSABA_DASHBOARD_URL").trim()
-    ].join("\n");
-  }
-
-  const priceReply = await buildPriceReplyFromApi(text, userId);
-  if (priceReply) return priceReply;
-
-  return buildBusabaMenuText();
-}
-
-function buildBusabaMenuText() {
   return [
-    "BUSABA SIGN SYSTEM",
+    "Busaba พร้อมใช้งานค่ะ",
     "",
-    "คำสั่งที่ใช้ได้",
-    "- เมนู",
-    "- เปิดงาน",
-    "- dashboard",
+    "คำสั่งภายในที่ใช้ได้:",
+    "#งานค้าง",
+    "#งานวันนี้",
+    "#งานด่วน",
+    "#สถานะงาน",
+    "#สรุปวันนี้",
     "",
-    "คำนวณราคา เช่น",
-    "- ไวนิล 100x200",
-    "- คอมโพสิต 120x240",
-    "- อะคริลิค 50x100"
+    "หากต้องการเปิดงานใหม่",
+    "กรอกฟอร์มได้ที่:",
+    formUrl
   ].join("\n");
 }
 
-/* =========================================================
- * PRICE FLOW
- * ========================================================= */
+async function fetchBusabaReport(reportType) {
+  const apiBase = String(
+    process.env.BUSABA_REPORT_API_URL ||
+    process.env.ISECRETARY_REPORT_API_URL ||
+    ""
+  ).trim();
 
-async function buildPriceReplyFromApi(text, userId) {
-  const apiBase = String(process.env.BUSABA_PRICE_API_URL || "").trim();
   if (!apiBase) {
-    return "ยังไม่ได้ตั้งค่า BUSABA_PRICE_API_URL";
+    return "ยังไม่ได้ตั้งค่า BUSABA_REPORT_API_URL ค่ะ";
   }
-
-  const size = extractSize(text);
-  if (!size) return "";
 
   const joinChar = apiBase.includes("?") ? "&" : "?";
-  const apiUrl = `${apiBase}${joinChar}line_id=${encodeURIComponent(userId)}`;
+  const url = `${apiBase}${joinChar}report=${encodeURIComponent(reportType)}`;
 
-  const data = await fetchPriceData(apiUrl);
-  if (!data || !data.ok) {
-    return "ไม่สามารถอ่านข้อมูลราคาจากระบบได้";
-  }
+  const response = await fetch(url, { method: "GET", redirect: "follow" });
+  const raw = await response.text();
 
-  const matchedRule = (data.rules || []).find(rule => {
-    return (
-      String(rule.active || "").toUpperCase() === "TRUE" &&
-      text.includes(String(rule.keyword || "").trim())
-    );
-  });
-
-  if (!matchedRule) return "";
-
-  const item = (data.catalog || []).find(c => {
-    return String(c.item_code || "").trim() === String(matchedRule.item_code || "").trim();
-  });
-
-  if (!item) {
-    return "พบประเภทงาน แต่ไม่พบข้อมูลราคาใน PRICE_CATALOG";
-  }
-
-  const customerType = String(data.customer_type || "ลูกค้าทั่วไป").trim();
-  const isPartner = customerType === "ลูกค้าหลังบ้าน";
-
-  const pricePerSqM = isPartner
-    ? Number(item.price_partner || 0)
-    : Number(item.price_general || 0);
-
-  const minPrice = isPartner
-    ? Number(item.min_price_partner || 0)
-    : Number(item.min_price_general || 0);
-
-  const areaSqM = (size.widthCm * size.heightCm) / 10000;
-  let price = areaSqM * pricePerSqM;
-  if (price < minPrice) price = minPrice;
-
-  return [
-    "ประเมินราคางานเบื้องต้น",
-    "",
-    "ประเภทลูกค้า: " + customerType,
-    "ประเภทงาน: " + String(item.item_name || "-").trim(),
-    "ขนาด: " + size.widthCm + "x" + size.heightCm + " ซม.",
-    "พื้นที่: " + areaSqM.toFixed(2) + " ตร.ม.",
-    "ราคา: " + Math.round(price).toLocaleString("en-US") + " บาท"
-  ].join("\n");
-}
-
-function extractSize(text) {
-  const m = String(text || "").match(/(\d+(?:\.\d+)?)\s*[xX*]\s*(\d+(?:\.\d+)?)/);
-  if (!m) return null;
-
-  return {
-    widthCm: Number(m[1]),
-    heightCm: Number(m[2])
-  };
-}
-
-async function fetchPriceData(apiUrl) {
+  let data = {};
   try {
-    const response = await fetch(apiUrl, { method: "GET" });
-    const rawText = await response.text();
-
-    console.log("BUSABA PRICE STATUS:", response.status);
-    console.log("BUSABA PRICE RAW:", rawText);
-
-    if (!response.ok) return null;
-    return JSON.parse(rawText);
-  } catch (error) {
-    console.error("fetchPriceData error:", error);
-    return null;
+    data = JSON.parse(raw);
+  } catch (err) {
+    return "ไม่สามารถอ่านข้อมูลรายงานได้ค่ะ";
   }
-}
 
-/* =========================================================
- * LINE REPLY
- * ========================================================= */
+  if (!data.ok) {
+    return data.message || "ไม่พบข้อมูลรายงานค่ะ";
+  }
+
+  return data.text || "ไม่พบข้อความรายงานค่ะ";
+}
 
 async function replyLineMessage(replyToken, text, accessToken) {
   if (!accessToken) {
-    console.error("Missing LINE_ACCESS_TOKEN");
+    console.error("Missing LINE access token for Busaba");
     return;
   }
 
