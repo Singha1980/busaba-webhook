@@ -1,6 +1,9 @@
 /*************************************************
  * ISECRETARY WEBHOOK
- * ใช้เฉพาะ LINE OA iSecretary
+ * SAFE MODE:
+ * - ขึ้นต้นด้วย "นัด" = appointment
+ * - ไม่ขึ้นต้นด้วย "นัด" = ไม่ลง APPOINTMENTS
+ * - งานป้ายต้องเปิดผ่าน Form Busaba เท่านั้น
  *************************************************/
 
 function normalizeText(text) {
@@ -11,6 +14,245 @@ function normalizeText(text) {
 function compactText(text) {
   return String(text || "").trim().toLowerCase().replace(/\s+/g, "");
 }
+
+function startsWithAppointmentKeyword(text) {
+  const raw = String(text || "").trim();
+  return raw.startsWith("นัด");
+}
+
+/* =========================================================
+ * INTENT ROUTER
+ * ========================================================= */
+
+function detectISecretaryIntent(text) {
+  const compact = compactText(text);
+  const raw = String(text || "").trim();
+
+  // ------------------------------
+  // นัดหมาย: ต้องขึ้นต้นด้วย "นัด" เท่านั้น
+  // ------------------------------
+  if (startsWithAppointmentKeyword(raw)) {
+    return "appointment_save";
+  }
+
+  // ------------------------------
+  // รายงานงานจาก TASKS
+  // ------------------------------
+  if (
+    compact.includes("งานวันนี้") ||
+    compact.includes("วันนี้มีงานอะไร") ||
+    compact.includes("มีงานอะไรวันนี้") ||
+    compact.includes("วันนี้มีงานกี่งาน") ||
+    compact.includes("งานวันนี้กี่งาน") ||
+    compact.includes("วันนี้ต้องทำอะไร") ||
+    compact.includes("วันนี้มีอะไรต้องทำ") ||
+    compact.includes("มีอะไรต้องทำวันนี้") ||
+    compact.includes("วันนี้มีงานไหม")
+  ) {
+    return "today_tasks";
+  }
+
+  if (
+    compact.includes("งานค้าง") ||
+    compact.includes("มีงานค้างไหม") ||
+    compact.includes("งานค้างกี่งาน") ||
+    compact.includes("งานค้างเหลือกี่งาน") ||
+    compact.includes("งานที่ยังไม่เสร็จ") ||
+    compact.includes("มีงานที่ยังไม่เสร็จไหม")
+  ) {
+    return "overdue_tasks";
+  }
+
+  if (
+    compact.includes("งานด่วน") ||
+    compact.includes("งานใกล้กำหนด") ||
+    compact.includes("งานใกล้ส่ง") ||
+    compact.includes("มีงานด่วนไหม")
+  ) {
+    return "urgent_tasks";
+  }
+
+  if (
+    compact.includes("สถานะงาน") ||
+    compact.includes("สรุปสถานะงาน") ||
+    compact.includes("งานตอนนี้เป็นยังไงบ้าง")
+  ) {
+    return "task_status_summary";
+  }
+
+  if (
+    compact.includes("สรุปวันนี้") ||
+    compact.includes("วันนี้สรุปอะไรบ้าง")
+  ) {
+    return "today_summary";
+  }
+
+  // ------------------------------
+  // ถามนัดหมาย (รายงาน)
+  // ------------------------------
+  if (
+    compact === "มีนัดไหม" ||
+    compact === "วันนี้มีนัดไหม" ||
+    compact === "มีนัดไหมวันนี้" ||
+    compact === "วันนี้มีนัด" ||
+    compact === "มีนัดวันนี้" ||
+    compact === "วันนี้มีนัดกี่โมง" ||
+    compact === "วันนี้มีนัดเวลาอะไร" ||
+    compact === "วันนี้มีนัดที่ไหน" ||
+    compact === "วันนี้ว่างไหม"
+  ) {
+    return "today_appointments";
+  }
+
+  if (
+    compact === "พรุ่งนี้มีนัดไหม" ||
+    compact === "มีนัดไหมพรุ่งนี้" ||
+    compact === "พรุ่งนี้มีนัด" ||
+    compact === "มีนัดพรุ่งนี้" ||
+    compact === "พรุ่งนี้มีนัดกี่โมง" ||
+    compact === "พรุ่งนี้มีนัดเวลาอะไร" ||
+    compact === "พรุ่งนี้มีนัดที่ไหน"
+  ) {
+    return "tomorrow_appointments";
+  }
+
+  if (
+    compact.includes("พรุ่งนี้ว่างไหม") ||
+    compact.includes("วันพรุ่งนี้ว่างไหม")
+  ) {
+    return "free_tomorrow";
+  }
+
+  if (
+    compact.includes("วันนี้มีนัดชนกันไหม") ||
+    compact.includes("มีนัดชนกันไหมวันนี้")
+  ) {
+    return "clash_today";
+  }
+
+  if (
+    compact.includes("พรุ่งนี้มีนัดชนกันไหม") ||
+    compact.includes("มีนัดชนกันไหมพรุ่งนี้")
+  ) {
+    return "clash_tomorrow";
+  }
+
+  if (
+    compact === "กี่โมง" ||
+    compact === "เวลาอะไร" ||
+    compact === "ที่ไหน" ||
+    compact === "นัดที่ไหน" ||
+    compact === "เรื่องอะไร"
+  ) {
+    return "appointment_followup";
+  }
+
+  if (
+    compact.includes("ไม่ใช่") ||
+    compact.includes("ไม่ได้นัด") ||
+    compact.includes("ไม่มีนัด") ||
+    compact.includes("ผิด") ||
+    compact.includes("เช็กใหม่") ||
+    compact.includes("เช็คใหม่") ||
+    compact.includes("มั่ว")
+  ) {
+    return "appointment_recheck";
+  }
+
+  return "general_note";
+}
+
+/* =========================================================
+ * SAFE PARSER FOR APPOINTMENT
+ * ========================================================= */
+
+function parseAppointmentSafely(text) {
+  const raw = String(text || "").trim();
+
+  // ตัดคำว่า "นัด" ด้านหน้าออกเพื่อนำไปเป็น detail
+  const withoutPrefix = raw.replace(/^นัด\s*/i, "").trim();
+
+  const parsed = {
+    intent: "appointment",
+    domain: detectDomainFromText(withoutPrefix),
+    date: parseDateFromThaiText(withoutPrefix),
+    time: parseTimeFromThaiText(withoutPrefix),
+    detail: withoutPrefix || raw,
+    location: "",
+    note: "",
+    missing_fields: [],
+    reply_text: ""
+  };
+
+  // ถ้าไม่มีเวลาชัดเจน ยังให้ถามต่อ
+  if (!parsed.date) parsed.missing_fields.push("date");
+  if (!parsed.time) parsed.missing_fields.push("time");
+
+  return parsed;
+}
+
+function detectDomainFromText(text) {
+  const t = String(text || "");
+
+  if (t.includes("เทศบาล")) return "เทศบาลเขาชีจรรย์";
+  if (t.includes("สมาคม")) return "สมาคมนักธุรกิจ";
+  if (t.includes("ร้านป้าย") || t.includes("ป้าย")) return "ร้านป้าย";
+  if (t.includes("ส่งงาน")) return "นัดส่งงาน";
+  if (t.includes("ดูงาน") || t.includes("ดูหน้างาน")) return "นัดดูงาน";
+  if (t.includes("ลูกค้า")) return "นัดลูกค้า";
+  if (t.includes("ติดตั้ง")) return "นัดติดตั้ง";
+
+  return "";
+}
+
+function parseDateFromThaiText(text) {
+  const now = new Date();
+
+  if (/พรุ่งนี้/.test(text)) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    return formatDateLocalISO(d);
+  }
+
+  if (/มะรืน/.test(text)) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 2);
+    return formatDateLocalISO(d);
+  }
+
+  const isoMatch = text.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+
+  const dmMatch = text.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{4}))?/);
+  if (dmMatch) {
+    const day = String(dmMatch[1]).padStart(2, "0");
+    const month = String(dmMatch[2]).padStart(2, "0");
+    const year = dmMatch[3] ? dmMatch[3] : String(now.getFullYear());
+    return `${year}-${month}-${day}`;
+  }
+
+  return "";
+}
+
+function parseTimeFromThaiText(text) {
+  const hm = text.match(/(\d{1,2})[:.](\d{2})/);
+  if (hm) {
+    return String(hm[1]).padStart(2, "0") + ":" + hm[2];
+  }
+
+  const onlyHour = text.match(/(\d{1,2})\s*โมง/);
+  if (onlyHour) {
+    return String(onlyHour[1]).padStart(2, "0") + ":00";
+  }
+
+  return "";
+}
+
+/* =========================================================
+ * WEBHOOK HANDLER
+ * ========================================================= */
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -50,209 +292,8 @@ export default async function handler(req, res) {
 }
 
 /* =========================================================
- * INTENT ROUTER
+ * MAIN COMMAND
  * ========================================================= */
-
-function detectISecretaryIntent(text) {
-  const compact = compactText(text);
-  const spaced = normalizeText(text);
-
-  // ------------------------------
-  // งานวันนี้
-  // ------------------------------
-  if (
-    compact.includes("งานวันนี้") ||
-    compact.includes("วันนี้มีงานอะไร") ||
-    compact.includes("มีงานอะไรวันนี้") ||
-    compact.includes("วันนี้มีงานกี่งาน") ||
-    compact.includes("งานวันนี้กี่งาน") ||
-    compact.includes("วันนี้ต้องทำอะไร") ||
-    compact.includes("วันนี้มีอะไรต้องทำ") ||
-    compact.includes("มีอะไรต้องทำวันนี้") ||
-    compact.includes("วันนี้มีงานไหม")
-  ) {
-    return "today_tasks";
-  }
-
-  // ------------------------------
-  // งานค้าง
-  // ------------------------------
-  if (
-    compact.includes("งานค้าง") ||
-    compact.includes("มีงานค้างไหม") ||
-    compact.includes("งานค้างกี่งาน") ||
-    compact.includes("งานค้างเหลือกี่งาน") ||
-    compact.includes("งานที่ยังไม่เสร็จ") ||
-    compact.includes("มีงานที่ยังไม่เสร็จไหม")
-  ) {
-    return "overdue_tasks";
-  }
-
-  // ------------------------------
-  // งานด่วน / ใกล้กำหนด
-  // ------------------------------
-  if (
-    compact.includes("งานด่วน") ||
-    compact.includes("งานใกล้กำหนด") ||
-    compact.includes("งานใกล้ส่ง") ||
-    compact.includes("มีงานด่วนไหม")
-  ) {
-    return "urgent_tasks";
-  }
-
-  // ------------------------------
-  // สถานะงานรวม
-  // ------------------------------
-  if (
-    compact.includes("สถานะงาน") ||
-    compact.includes("สรุปสถานะงาน") ||
-    compact.includes("งานตอนนี้เป็นยังไงบ้าง")
-  ) {
-    return "task_status_summary";
-  }
-
-  // ------------------------------
-  // สรุปวันนี้
-  // ------------------------------
-  if (
-    compact.includes("สรุปวันนี้") ||
-    compact.includes("วันนี้สรุปอะไรบ้าง")
-  ) {
-    return "today_summary";
-  }
-
-  // ------------------------------
-  // นัดวันนี้
-  // ------------------------------
-  if (
-    compact === "มีนัดไหม" ||
-    compact === "วันนี้มีนัดไหม" ||
-    compact === "มีนัดไหมวันนี้" ||
-    compact === "วันนี้มีนัด" ||
-    compact === "มีนัดวันนี้" ||
-    compact === "วันนี้มีนัดกี่โมง" ||
-    compact === "วันนี้มีนัดเวลาอะไร" ||
-    compact === "วันนี้มีนัดที่ไหน" ||
-    compact === "วันนี้ว่างไหม"
-  ) {
-    return "today_appointments";
-  }
-
-  // ------------------------------
-  // นัดพรุ่งนี้
-  // ------------------------------
-  if (
-    compact === "พรุ่งนี้มีนัดไหม" ||
-    compact === "มีนัดไหมพรุ่งนี้" ||
-    compact === "พรุ่งนี้มีนัด" ||
-    compact === "มีนัดพรุ่งนี้" ||
-    compact === "พรุ่งนี้มีนัดกี่โมง" ||
-    compact === "พรุ่งนี้มีนัดเวลาอะไร" ||
-    compact === "พรุ่งนี้มีนัดที่ไหน"
-  ) {
-    return "tomorrow_appointments";
-  }
-
-  if (
-    compact.includes("พรุ่งนี้ว่างไหม") ||
-    compact.includes("วันพรุ่งนี้ว่างไหม")
-  ) {
-    return "free_tomorrow";
-  }
-
-  // ------------------------------
-  // นัดชนกัน
-  // ------------------------------
-  if (
-    compact.includes("วันนี้มีนัดชนกันไหม") ||
-    compact.includes("มีนัดชนกันไหมวันนี้")
-  ) {
-    return "clash_today";
-  }
-
-  if (
-    compact.includes("พรุ่งนี้มีนัดชนกันไหม") ||
-    compact.includes("มีนัดชนกันไหมพรุ่งนี้")
-  ) {
-    return "clash_tomorrow";
-  }
-
-  // ------------------------------
-  // follow-up นัด
-  // ------------------------------
-  if (
-    compact === "กี่โมง" ||
-    compact === "เวลาอะไร" ||
-    compact === "ที่ไหน" ||
-    compact === "นัดที่ไหน" ||
-    compact === "เรื่องอะไร"
-  ) {
-    return "appointment_followup";
-  }
-
-  // ------------------------------
-  // correction
-  // ------------------------------
-  if (
-    compact.includes("ไม่ใช่") ||
-    compact.includes("ไม่ได้นัด") ||
-    compact.includes("ไม่มีนัด") ||
-    compact.includes("ผิด") ||
-    compact.includes("เช็กใหม่") ||
-    compact.includes("เช็คใหม่") ||
-    compact.includes("มั่ว")
-  ) {
-    return "appointment_recheck";
-  }
-
-  return "";
-}
-
-/* =========================================================
- * ISECRETARY MAIN
- * ========================================================= */
-
-function sanitizeParsedForStructuredSave_(rawText, parsed) {
-  const text = String(rawText || "").trim();
-  const result = { ...parsed };
-
-  // ห้ามเดา location ถ้าข้อความต้นฉบับไม่มี location ชัดเจน
-  const hasExplicitLocation =
-    /ที่|สถานที่|สำนักงาน|ออฟฟิศ|เทศบาล|สมาคม|ร้าน|โรงแรม|ห้องประชุม/.test(text);
-
-  // แต่ถ้าคำว่า เทศบาล/สมาคม/ร้านป้าย ถูกใช้เป็นหมวดงาน
-  // ไม่ให้ยกไปเป็น location อัตโนมัติ
-  if (!/ที่|สถานที่|สำนักงาน|ออฟฟิศ|โรงแรม|ห้องประชุม/.test(text)) {
-    result.location = "";
-  } else if (!hasExplicitLocation) {
-    result.location = "";
-  }
-
-  // ห้ามเดา note
-  result.note = "";
-
-  // ถ้า detail ที่ GPT สร้างไม่ได้ใกล้เคียงกับข้อความจริง ให้ใช้ข้อความจริงแบบปลอดภัย
-  const compactRaw = text.replace(/\s+/g, "");
-  const compactDetail = String(result.detail || "").replace(/\s+/g, "");
-
-  if (!compactDetail || compactRaw.indexOf(compactDetail) === -1) {
-    // สร้าง detail แบบ conservative จากข้อความจริง
-    result.detail = text;
-  }
-
-  // ถ้าเป็น appointment แล้วมี domain แต่ detail ยังยาวเกิน/แต่งเกิน
-  // ให้เก็บ detail ตามข้อความจริงเท่านั้น
-  if (result.intent === "appointment") {
-    result.detail = text;
-  }
-
-  // ถ้าเป็น task/note ก็ใช้ข้อความจริง
-  if (result.intent === "task") {
-    result.detail = text;
-  }
-
-  return result;
-}
 
 async function handleISecretaryCommand(text, userId) {
   const intent = detectISecretaryIntent(text);
@@ -345,353 +386,45 @@ async function handleISecretaryCommand(text, userId) {
     }
   }
 
-  const state = await getSecretaryState(userId);
+  if (intent === "appointment_save") {
+    let parsed = parseAppointmentSafely(text);
 
-  if (state) {
-    const directDomain = mapShortDomainAnswer(text);
-    if (directDomain) {
-      const mergedDirect = {
-        ...state,
-        domain: directDomain
-      };
-
-      const missingAfterDirect = computeMissingFieldsLocal(mergedDirect);
-
-      if (missingAfterDirect.length > 0) {
-        await saveSecretaryState(userId, {
-          ...mergedDirect,
-          missing_fields: missingAfterDirect
-        });
-        return buildFollowupText(missingAfterDirect);
-      }
-
-      const savedDirect = await saveSecretaryRecord({
-        ...mergedDirect,
-        user_id: userId,
-        raw_text: text,
-        priority: inferPriority(text, mergedDirect)
-      });
-
-      if (!savedDirect.ok) {
-        return "บันทึกไม่สำเร็จค่ะ คุณสิงห์: " + (savedDirect.message || "unknown error");
-      }
-
-      await clearSecretaryState(userId);
-      return buildSaveSuccessText(savedDirect, mergedDirect);
-    }
-
-    const followupParsed = await parseWithGPT(text);
-    followupParsed.domain = inferDomainFromTextAndParsed(text, followupParsed, state.domain || "");
-    followupParsed.priority = inferPriority(text, followupParsed);
-
-    const merged = await mergeSecretaryState(userId, followupParsed, text);
-
-    if (!merged.ok) {
-      return "ไอซ์รวมข้อมูลต่อไม่สำเร็จค่ะ คุณสิงห์";
-    }
-
-    if (!merged.merged.domain) {
+    if (parsed.missing_fields.length > 0) {
       await saveSecretaryState(userId, {
-        ...merged.merged,
-        missing_fields: ["domain"]
+        ...parsed,
+        priority: "NORMAL"
       });
-      return buildFollowupText(["domain"]);
-    }
-
-    if (merged.missing_fields && merged.missing_fields.length > 0) {
-      await saveSecretaryState(userId, {
-        ...merged.merged,
-        missing_fields: merged.missing_fields
-      });
-      return buildFollowupText(merged.missing_fields);
+      return buildFollowupText(parsed.missing_fields);
     }
 
     const saved = await saveSecretaryRecord({
-      ...merged.merged,
-      priority: merged.merged.priority || inferPriority(text, merged.merged),
+      ...parsed,
       user_id: userId,
-      raw_text: text
+      raw_text: text,
+      priority: "NORMAL"
     });
 
     if (!saved.ok) {
-      return "บันทึกไม่สำเร็จค่ะ คุณสิงห์: " + (saved.message || "unknown error");
+      return "บันทึกนัดหมายไม่สำเร็จค่ะ คุณสิงห์";
     }
 
     await clearSecretaryState(userId);
-    return buildSaveSuccessText(saved, merged.merged);
+    return buildSaveSuccessText(saved, parsed);
   }
 
-  const parsed = await parseWithGPT(text);
-  parsed.domain = inferDomainFromTextAndParsed(text, parsed, "");
-  parsed.priority = inferPriority(text, parsed);
-
-  if (!parsed.intent) {
-    return "ไอซ์ยังตีความไม่สำเร็จค่ะ ลองพิมพ์ใหม่อีกนิดนะคะ คุณสิงห์";
-  }
-
-  if (parsed.intent === "chat") {
-    return await buildChatReply(text);
-  }
-
-  const missingFields = Array.isArray(parsed.missing_fields) ? [...parsed.missing_fields] : [];
-
-  if (!parsed.domain && !missingFields.includes("domain")) {
-    missingFields.push("domain");
-  }
-
-  if (missingFields.length > 0) {
-    await saveSecretaryState(userId, {
-      ...parsed,
-      missing_fields: missingFields
-    });
-    return buildFollowupText(missingFields);
-  }
-
-  const saved = await saveSecretaryRecord({
-    ...parsed,
-    user_id: userId,
-    raw_text: text
-  });
-
-  if (!saved.ok) {
-    return "บันทึกไม่สำเร็จค่ะ คุณสิงห์: " + (saved.message || "unknown error");
-  }
-
-  return buildSaveSuccessText(saved, parsed);
-}
-
-/* =========================================================
- * GPT PARSER
- * ========================================================= */
-
-async function parseWithGPT(text) {
-  try {
-    const model = String(process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
-
-    const now = new Date();
-    const todayISO = formatDateLocalISO(now);
-    const tomorrowISO = formatDateLocalISO(addDays(now, 1));
-    const yesterdayISO = formatDateLocalISO(addDays(now, -1));
-
-    const systemPrompt = `
-วันนี้คือ ${todayISO}
-
-คุณคือเลขาส่วนตัวชื่อ "ไอซ์"
-กำลังดูแลงานของ "คุณสิงห์"
-
-ให้ตอบเป็น JSON object เท่านั้น
-ห้ามตอบเป็นข้อความธรรมดา
-ห้ามใช้ markdown
-ห้ามใช้ code block
-
-intent ต้องเป็นหนึ่งใน:
-task
-appointment
-chat
-
-domain ต้องเป็นหนึ่งใน:
-สมาคมนักธุรกิจ
-เทศบาลเขาชีจรรย์
-ร้านป้าย
-หรือ ""
-
-ต้องมี keys ต่อไปนี้เสมอ:
-intent
-domain
-date
-time
-detail
-location
-note
-missing_fields
-reply_text
-`;
-
-    const body = {
-      model,
-      temperature: 0.1,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: text }
-      ]
-    };
-
-    if (
-      model.includes("gpt-4o") ||
-      model.includes("gpt-4.1") ||
-      model.includes("gpt-5")
-    ) {
-      body.response_format = { type: "json_object" };
-    }
-
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(body)
-    });
-
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content || "";
-    const parsed = parseJsonSafely(content);
-    return normalizeParsedObject(parsed);
-  } catch (err) {
-    console.error("parseWithGPT error:", err);
-    return {
-      intent: "",
-      domain: "",
-      date: "",
-      time: "",
-      detail: "",
-      location: "",
-      note: "",
-      missing_fields: [],
-      reply_text: ""
-    };
-  }
-}
-
-async function buildChatReply(text) {
-  try {
-    const model = String(process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
-
-    const prompt = `
-คุณคือ "ไอซ์" เลขาส่วนตัวของ "คุณสิงห์"
-ตอบกระชับ สุภาพ และห้ามอ้างข้อมูลที่ไม่มีในระบบ
-`;
-
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.5,
-        messages: [
-          { role: "system", content: prompt },
-          { role: "user", content: text }
-        ]
-      })
-    });
-
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content || "";
-    return String(content || "รับทราบค่ะ คุณสิงห์").trim();
-  } catch (err) {
-    console.error("buildChatReply error:", err);
-    return "รับทราบค่ะ คุณสิงห์";
-  }
-}
-
-function parseJsonSafely(content) {
-  if (!content) return {};
-
-  try {
-    return JSON.parse(content);
-  } catch (err) {}
-
-  try {
-    const cleaned = String(content)
-      .replace(/^```json\s*/i, "")
-      .replace(/^```\s*/i, "")
-      .replace(/\s*```$/i, "")
-      .trim();
-
-    return JSON.parse(cleaned);
-  } catch (err) {}
-
-  try {
-    const str = String(content);
-    const start = str.indexOf("{");
-    const end = str.lastIndexOf("}");
-    if (start !== -1 && end !== -1 && end > start) {
-      return JSON.parse(str.slice(start, end + 1));
-    }
-  } catch (err) {}
-
-  return {};
-}
-
-function normalizeParsedObject(parsed) {
-  return {
-    intent: String(parsed?.intent || "").trim(),
-    domain: String(parsed?.domain || "").trim(),
-    date: String(parsed?.date || "").trim(),
-    time: String(parsed?.time || "").trim(),
-    detail: String(parsed?.detail || "").trim(),
-    location: String(parsed?.location || "").trim(),
-    note: String(parsed?.note || "").trim(),
-    missing_fields: Array.isArray(parsed?.missing_fields) ? parsed.missing_fields : [],
-    reply_text: String(parsed?.reply_text || "").trim()
-  };
-}
-
-/* =========================================================
- * DOMAIN + PRIORITY
- * ========================================================= */
-
-function inferDomainFromTextAndParsed(text, parsed, fallbackDomain) {
-  const sourceText = String(text || "").toLowerCase();
-  const detail = String(parsed?.detail || "").toLowerCase();
-  const location = String(parsed?.location || "").toLowerCase();
-  const all = [sourceText, detail, location].join(" ");
-
-  if (all.includes("สมาคม") || all.includes("นักธุรกิจ")) return "สมาคมนักธุรกิจ";
-  if (all.includes("เทศบาล") || all.includes("เขาชีจรรย์") || all.includes("ชุมชน")) return "เทศบาลเขาชีจรรย์";
-  if (all.includes("ร้านป้าย") || all.includes("ป้าย") || all.includes("ลูกค้า") || all.includes("ติดตั้ง") || all.includes("ผลิต")) return "ร้านป้าย";
-
-  return String(fallbackDomain || "").trim();
-}
-
-function mapShortDomainAnswer(text) {
-  const t = compactText(text);
-  if (t === "สมาคม" || t === "สมาคมนักธุรกิจ") return "สมาคมนักธุรกิจ";
-  if (t === "เทศบาล" || t === "เทศบาลเขาชีจรรย์" || t === "เขาชีจรรย์") return "เทศบาลเขาชีจรรย์";
-  if (t === "ร้านป้าย" || t === "ป้าย") return "ร้านป้าย";
-  return "";
-}
-
-function inferPriority(text, parsed) {
-  const all = [String(text || ""), String(parsed?.detail || ""), String(parsed?.note || "")]
-    .join(" ")
-    .toLowerCase();
-
-  if (
-    all.includes("ด่วน") ||
-    all.includes("ด่วนมาก") ||
-    all.includes("รีบ") ||
-    all.includes("ทันที") ||
-    all.includes("urgent")
-  ) {
-    return "HIGH";
-  }
-
-  return "NORMAL";
-}
-
-function computeMissingFieldsLocal(obj) {
-  const missing = [];
-
-  if (!obj.intent) missing.push("intent");
-  if (!obj.detail) missing.push("detail");
-
-  if (obj.intent === "appointment") {
-    if (!obj.date) missing.push("date");
-    if (!obj.time) missing.push("time");
-    if (!obj.location) missing.push("location");
-  }
-
-  if (obj.intent === "task") {
-    if (!obj.date) missing.push("date");
-  }
-
-  if (!obj.domain) missing.push("domain");
-
-  return missing;
+  // ข้อความทั่วไป = บันทึกโน้ตอย่างเดียว ไม่สร้าง TASKS
+  return [
+    "รับทราบค่ะ คุณสิงห์",
+    "",
+    "หากต้องการบันทึกนัดหมาย",
+    "กรุณาพิมพ์ขึ้นต้นด้วยคำว่า “นัด”",
+    "",
+    "ตัวอย่าง:",
+    "นัด พรุ่งนี้ 10 โมง ประชุมเทศบาล",
+    "",
+    "หากต้องการเปิดงานร้านป้าย",
+    "กรุณากรอกผ่านฟอร์ม Busaba"
+  ].join("\n");
 }
 
 /* =========================================================
@@ -749,23 +482,6 @@ async function saveSecretaryState(userId, payload) {
   return await response.json();
 }
 
-async function mergeSecretaryState(userId, payload, rawText) {
-  const apiBase = String(process.env.ISECRETARY_REPORT_API_URL || "").trim();
-
-  const response = await fetch(apiBase, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      action: "merge-state",
-      user_id: userId,
-      payload,
-      raw_text: rawText
-    })
-  });
-
-  return await response.json();
-}
-
 async function clearSecretaryState(userId) {
   const apiBase = String(process.env.ISECRETARY_REPORT_API_URL || "").trim();
 
@@ -802,17 +518,11 @@ async function saveSecretaryRecord(payload) {
 
 function buildFollowupText(missingFields) {
   const map = {
-    domain: "งานนี้เป็นเรื่อง สมาคม / เทศบาล / ร้านป้าย คะ",
-    intent: "ประเภท",
     date: "วันที่",
     time: "เวลา",
     detail: "รายละเอียด",
     location: "สถานที่"
   };
-
-  if (missingFields.length === 1 && missingFields[0] === "domain") {
-    return "งานนี้เป็นเรื่อง สมาคม / เทศบาล / ร้านป้าย คะ คุณสิงห์";
-  }
 
   const lines = ["ไอซ์ขอข้อมูลเพิ่มอีกนิดค่ะ คุณสิงห์", ""];
   missingFields.forEach(f => lines.push("- " + (map[f] || f)));
@@ -820,7 +530,6 @@ function buildFollowupText(missingFields) {
 }
 
 function buildSaveSuccessText(saved, parsed) {
-
   const isAppointment = parsed.intent === "appointment";
 
   const lines = [];
@@ -838,19 +547,8 @@ function buildSaveSuccessText(saved, parsed) {
   lines.push("เวลา: " + (parsed.time || "-"));
   lines.push("รายละเอียด: " + (parsed.detail || "-"));
   lines.push("สถานที่: " + (parsed.location || "-"));
-  lines.push("หมายเหตุ: " + (parsed.note || "-"));
+  lines.push("หมายเหตุ: -");
 
-  if (!isAppointment) {
-    lines.push("");
-    lines.push("หากต้องการเปิดงานร้านป้าย");
-    lines.push("กรุณากรอกผ่านฟอร์ม Busaba");
-  }
-
-  if (parsed.priority === "HIGH") {
-    lines.push("ระดับความสำคัญ: ด่วน");
-  }
-
-  // 🔔 เตือนวันหวยออก (คงไว้เหมือนเดิม)
   if (saved && saved.is_lottery_day) {
     lines.push("");
     lines.push("หมายเหตุเพิ่มเติม: วันดังกล่าวตรงกับวันหวยออกค่ะ คุณสิงห์");
@@ -858,6 +556,7 @@ function buildSaveSuccessText(saved, parsed) {
 
   return lines.join("\n");
 }
+
 /* =========================================================
  * DATE HELPERS
  * ========================================================= */
