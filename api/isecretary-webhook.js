@@ -20,6 +20,28 @@ function startsWithAppointmentKeyword(text) {
   return raw.startsWith("นัด");
 }
 
+function containsWeekdayQuery(text) {
+  const compact = compactText(text);
+
+  const keywords = [
+    "วันนี้",
+    "พรุ่งนี้",
+    "มะรืน",
+    "วันจันทร์",
+    "วันอังคาร",
+    "วันพุธ",
+    "วันพฤหัส",
+    "วันศุกร์",
+    "วันเสาร์",
+    "วันอาทิตย์",
+    "อาทิตย์นี้",
+    "อาทิตย์หน้า",
+    "สัปดาห์นี้",
+    "สัปดาห์หน้า"
+  ];
+
+  return keywords.some(k => compact.includes(k));
+}
 /* =========================================================
  * INTENT ROUTER
  * ========================================================= */
@@ -88,7 +110,7 @@ function detectISecretaryIntent(text) {
   }
 
   // ------------------------------
-  // ถามนัดหมาย (รายงาน)
+  // ถามนัดหมาย / เช็กว่าง / เช็กคิว
   // ------------------------------
   if (
     compact === "มีนัดไหม" ||
@@ -137,6 +159,21 @@ function detectISecretaryIntent(text) {
     return "clash_tomorrow";
   }
 
+  // ------------------------------
+  // ใหม่: ถ้ามีคำวัน + คำถามนัด/ว่าง/คิว/มีอะไรบ้าง
+  // ------------------------------
+  if (
+    containsWeekdayQuery(raw) &&
+    (
+      compact.includes("นัด") ||
+      compact.includes("ว่าง") ||
+      compact.includes("คิว") ||
+      compact.includes("มีอะไรบ้าง")
+    )
+  ) {
+    return "custom_appointments_query";
+  }
+
   if (
     compact === "กี่โมง" ||
     compact === "เวลาอะไร" ||
@@ -161,7 +198,6 @@ function detectISecretaryIntent(text) {
 
   return "general_note";
 }
-
 /* =========================================================
  * SAFE PARSER FOR APPOINTMENT
  * ========================================================= */
@@ -360,6 +396,13 @@ async function handleISecretaryCommand(text, userId) {
     return await fetchISecretaryReport("clash_tomorrow");
   }
 
+    if (intent === "custom_appointments_query") {
+    return await fetchISecretaryReport(
+      "custom_appointments_query",
+      { text }
+    );
+  }
+  
   if (intent === "appointment_followup") {
     const state = await getSecretaryState(userId);
 
@@ -431,16 +474,42 @@ async function handleISecretaryCommand(text, userId) {
  * APPS SCRIPT API
  * ========================================================= */
 
-async function fetchISecretaryReport(reportType) {
+async function fetchISecretaryReport(reportType, extraPayload = null) {
   const apiBase = String(process.env.ISECRETARY_REPORT_API_URL || "").trim();
   if (!apiBase) {
     return "ยังไม่ได้ตั้งค่า ISECRETARY_REPORT_API_URL ค่ะ คุณสิงห์";
   }
 
-  const joinChar = apiBase.includes("?") ? "&" : "?";
-  const url = `${apiBase}${joinChar}report=${encodeURIComponent(reportType)}`;
+  // เคสธรรมดา ใช้ GET เหมือนเดิม
+  if (!extraPayload) {
+    const joinChar = apiBase.includes("?") ? "&" : "?";
+    const url = `${apiBase}${joinChar}report=${encodeURIComponent(reportType)}`;
 
-  const response = await fetch(url, { method: "GET", redirect: "follow" });
+    const response = await fetch(url, { method: "GET", redirect: "follow" });
+    const raw = await response.text();
+
+    let data = {};
+    try {
+      data = JSON.parse(raw);
+    } catch (err) {
+      return "ไม่สามารถอ่านข้อมูลรายงานได้ค่ะ คุณสิงห์";
+    }
+
+    if (!data.ok) return data.message || "ไม่พบข้อมูลรายงานค่ะ คุณสิงห์";
+    return data.text || "ไม่พบข้อความรายงานค่ะ คุณสิงห์";
+  }
+
+  // เคส custom query ใช้ POST
+  const response = await fetch(apiBase, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "report-query",
+      report: reportType,
+      payload: extraPayload
+    })
+  });
+
   const raw = await response.text();
 
   let data = {};
