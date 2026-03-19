@@ -397,11 +397,29 @@ async function handleISecretaryCommand(text, userId) {
   }
 
     if (intent === "custom_appointments_query") {
-    return await fetchISecretaryReport(
-      "custom_appointments_query",
-      { text }
-    );
+
+  const raw = String(text || "");
+
+  // 🔹 map ให้ใช้ของเดิมก่อน (ไม่พัง)
+  if (raw.includes("วันนี้")) {
+    return await fetchISecretaryReport("today_appointments");
   }
+
+  if (raw.includes("พรุ่งนี้")) {
+    return await fetchISecretaryReport("tomorrow_appointments");
+  }
+
+  // 🔹 วันอื่นยังไม่รองรับ → ตอบแบบฉลาด
+  return [
+    "ตอนนี้ระบบรองรับเฉพาะ",
+    "• วันนี้",
+    "• พรุ่งนี้",
+    "",
+    "ตัวอย่าง:",
+    "วันนี้มีนัดไหม",
+    "พรุ่งนี้ว่างไหม"
+  ].join("\n");
+}
   
   if (intent === "appointment_followup") {
     const state = await getSecretaryState(userId);
