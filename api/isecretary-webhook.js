@@ -850,6 +850,12 @@ function buildSaveSuccessText(saved, parsed) {
   lines.push("สถานที่: " + (parsed.location || "-"));
   lines.push("หมายเหตุ: -");
 
+  if (isAppointment && saved && saved.calendar_created) {
+    lines.push("Google Calendar: เพิ่มแล้ว");
+  } else if (isAppointment && saved && saved.calendar_warning) {
+    lines.push("Google Calendar: " + saved.calendar_warning);
+  }
+
   if (saved && saved.is_lottery_day) {
     lines.push("");
     lines.push("หมายเหตุเพิ่มเติม: วันดังกล่าวตรงกับวันหวยออกค่ะ คุณสิงห์");
