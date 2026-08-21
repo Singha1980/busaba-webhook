@@ -427,6 +427,40 @@ async function handleISecretaryCommand(text, userId) {
     return "ยกเลิกข้อมูลที่กำลังกรอกแล้วค่ะ คุณสิงห์";
   }
 
+  if (currentState && currentState.intent === "task_close_confirmation") {
+    if (!isConfirmCommand(text)) {
+      return [
+        "กำลังรอยืนยันปิดงาน " + currentState.domain,
+        "พิมพ์ “ยืนยัน” เพื่อปิดงาน",
+        "หรือพิมพ์ “ยกเลิก”"
+      ].join("\n");
+    }
+
+    const closed = await closeTask(currentState.domain, userId);
+    if (!closed.ok) return closed.message || "ปิดงานไม่สำเร็จค่ะ คุณสิงห์";
+    await clearSecretaryState(userId);
+    return buildTaskClosedText(closed);
+  }
+
+  const closeMatch = String(text || "").trim().match(/^(?:จบ|ปิดงาน)\s+(.+)$/i);
+  if (closeMatch) {
+    const found = await findOpenTask(closeMatch[1]);
+    if (!found.ok) return found.message || "ไม่พบงานที่ต้องการปิดค่ะ คุณสิงห์";
+
+    await saveSecretaryState(userId, {
+      intent: "task_close_confirmation",
+      domain: found.task.task_id,
+      date: "",
+      time: "",
+      detail: found.task.customer_name + " | " + found.task.job_detail,
+      location: "",
+      note: found.task.required_date || "",
+      missing_fields: ["confirm"],
+      priority: "NORMAL"
+    });
+    return buildTaskCloseConfirmationText(found.task);
+  }
+
   if (currentState && currentState.intent === "appointment") {
     const pending = Array.isArray(currentState.missing_fields) ? currentState.missing_fields : [];
 
@@ -714,6 +748,26 @@ async function saveSecretaryRecord(payload) {
   return await response.json();
 }
 
+async function findOpenTask(taskRef) {
+  const apiBase = String(process.env.ISECRETARY_REPORT_API_URL || "").trim();
+  const response = await fetch(apiBase, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "find-open-task", task_ref: taskRef })
+  });
+  return await response.json();
+}
+
+async function closeTask(taskId, userId) {
+  const apiBase = String(process.env.ISECRETARY_REPORT_API_URL || "").trim();
+  const response = await fetch(apiBase, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "close-task", task_id: taskId, user_id: userId })
+  });
+  return await response.json();
+}
+
 /* =========================================================
  * TEXT BUILDERS
  * ========================================================= */
@@ -748,6 +802,32 @@ function buildConfirmationText(parsed) {
     "หากต้องการแก้ พิมพ์วันที่หรือเวลาใหม่ได้เลย",
     "หรือพิมพ์ “ยกเลิก”"
   ].filter(Boolean).join("\n");
+}
+
+function buildTaskCloseConfirmationText(task) {
+  return [
+    "ต้องการปิดงานนี้ใช่ไหมคะ?",
+    "",
+    "🧾 " + task.task_id,
+    "👤 " + (task.customer_name || "-"),
+    "📌 " + (task.job_detail || "-"),
+    "⚙️ " + (task.production_status || task.status || "-"),
+    "📅 ส่ง " + (task.required_date || "-"),
+    "",
+    "พิมพ์ “ยืนยัน” เพื่อปิดงาน",
+    "หรือพิมพ์ “ยกเลิก”"
+  ].join("\n");
+}
+
+function buildTaskClosedText(result) {
+  const task = result.task || {};
+  return [
+    "✅ ปิดงานเรียบร้อยแล้วค่ะ",
+    "งาน: " + (task.task_id || "-"),
+    "ลูกค้า: " + (task.customer_name || "-"),
+    "สถานะ: เสร็จแล้ว",
+    "ปิดเมื่อ: " + (result.closed_at || "-")
+  ].join("\n");
 }
 
 function buildSaveSuccessText(saved, parsed) {
