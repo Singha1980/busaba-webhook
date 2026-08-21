@@ -214,7 +214,7 @@ function parseAppointmentSafely(text) {
     date: parseDateFromThaiText(withoutPrefix),
     time: parseTimeFromThaiText(withoutPrefix),
     detail: withoutPrefix || raw,
-    location: "",
+    location: parseLocationFromThaiText(withoutPrefix),
     note: "",
     missing_fields: [],
     reply_text: ""
@@ -261,15 +261,103 @@ function parseDateFromThaiText(text) {
     return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
   }
 
-  const dmMatch = text.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{4}))?/);
+  const dmMatch = text.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
   if (dmMatch) {
     const day = String(dmMatch[1]).padStart(2, "0");
     const month = String(dmMatch[2]).padStart(2, "0");
-    const year = dmMatch[3] ? dmMatch[3] : String(now.getFullYear());
+    const year = normalizeThaiYear(dmMatch[3], now.getFullYear());
     return `${year}-${month}-${day}`;
   }
 
+  const weekdayWithDay = text.match(/วัน(?:จันทร์|อังคาร|พุธ|พฤหัส(?:บดี)?|ศุกร์|เสาร์|อาทิตย์)\s*(?:ที่)?\s*(\d{1,2})/);
+  if (weekdayWithDay) {
+    const d = nextDateWithDay(Number(weekdayWithDay[1]), now);
+    return d ? formatDateLocalISO(d) : "";
+  }
+
+  const weekdays = {
+    "วันอาทิตย์": 0, "วันจันทร์": 1, "วันอังคาร": 2, "วันพุธ": 3,
+    "วันพฤหัสบดี": 4, "วันพฤหัส": 4, "วันศุกร์": 5, "วันเสาร์": 6
+  };
+  for (const [word, weekday] of Object.entries(weekdays)) {
+    if (text.includes(word)) {
+      const d = new Date(now);
+      d.setDate(d.getDate() + ((weekday - d.getDay() + 7) % 7));
+      return formatDateLocalISO(d);
+    }
+  }
+
   return "";
+}
+
+function normalizeThaiYear(value, fallbackYear) {
+  if (!value) return String(fallbackYear);
+  let year = Number(value);
+  if (value.length === 2) year += year >= 50 ? 2500 : 2000;
+  if (year > 2400) year -= 543;
+  return String(year);
+}
+
+function nextDateWithDay(day, now) {
+  if (day < 1 || day > 31) return null;
+  for (let monthOffset = 0; monthOffset < 13; monthOffset++) {
+    const candidate = new Date(now.getFullYear(), now.getMonth() + monthOffset, day);
+    if (candidate.getDate() === day && candidate >= new Date(now.getFullYear(), now.getMonth(), now.getDate())) return candidate;
+  }
+  return null;
+}
+
+function parseLocationFromThaiText(text) {
+  const match = String(text || "").match(/(?:ที่|ณ)\s*([^\d,，]+)$/i);
+  return match ? match[1].trim() : "";
+}
+
+function parseAppointmentFollowup(text, state) {
+  const raw = String(text || "").trim();
+  const parsed = {
+    intent: "appointment",
+    domain: detectDomainFromText(raw),
+    date: parseDateFromThaiText(raw),
+    time: parseTimeFromThaiText(raw),
+    detail: "",
+    location: parseLocationFromThaiText(raw),
+    note: "",
+    priority: state.priority || "NORMAL"
+  };
+  const expected = Array.isArray(state.missing_fields) ? state.missing_fields[0] : "";
+  if (expected === "detail" && !parsed.date && !parsed.time) parsed.detail = raw;
+  if (expected === "location" && !parsed.location) parsed.location = raw;
+  return parsed;
+}
+
+function mergeAppointmentState(state, parsed) {
+  return {
+    intent: "appointment",
+    domain: parsed.domain || state.domain || "",
+    date: parsed.date || state.date || "",
+    time: parsed.time || state.time || "",
+    detail: parsed.detail || state.detail || "",
+    location: parsed.location || state.location || "",
+    note: parsed.note || state.note || "",
+    priority: parsed.priority || state.priority || "NORMAL",
+    missing_fields: []
+  };
+}
+
+function appointmentMissingFields(parsed) {
+  const missing = [];
+  if (!parsed.date) missing.push("date");
+  if (!parsed.time) missing.push("time");
+  if (!parsed.detail) missing.push("detail");
+  return missing;
+}
+
+function isCancelCommand(text) {
+  return /^(ยกเลิก|ไม่เอาแล้ว|เริ่มใหม่)$/i.test(String(text || "").trim());
+}
+
+function isConfirmCommand(text) {
+  return /^(ยืนยัน|ตกลง|โอเค|ok|ใช่|ถูกต้อง)$/i.test(String(text || "").trim());
 }
 
 function parseTimeFromThaiText(text) {
@@ -332,6 +420,43 @@ export default async function handler(req, res) {
  * ========================================================= */
 
 async function handleISecretaryCommand(text, userId) {
+  const currentState = await getSecretaryState(userId);
+
+  if (isCancelCommand(text) && currentState) {
+    await clearSecretaryState(userId);
+    return "ยกเลิกข้อมูลที่กำลังกรอกแล้วค่ะ คุณสิงห์";
+  }
+
+  if (currentState && currentState.intent === "appointment") {
+    const pending = Array.isArray(currentState.missing_fields) ? currentState.missing_fields : [];
+
+    if (pending[0] === "confirm") {
+      if (isConfirmCommand(text)) {
+        const saved = await saveSecretaryRecord({
+          ...currentState,
+          user_id: userId,
+          raw_text: currentState.detail,
+          missing_fields: []
+        });
+        if (!saved.ok) return "บันทึกนัดหมายไม่สำเร็จค่ะ คุณสิงห์";
+        await clearSecretaryState(userId);
+        return buildSaveSuccessText(saved, currentState);
+      }
+
+      const edited = mergeAppointmentState(currentState, parseAppointmentFollowup(text, currentState));
+      const editedMissing = appointmentMissingFields(edited);
+      edited.missing_fields = editedMissing.length ? editedMissing : ["confirm"];
+      await saveSecretaryState(userId, edited);
+      return editedMissing.length ? buildFollowupText(editedMissing) : buildConfirmationText(edited);
+    }
+
+    const merged = mergeAppointmentState(currentState, parseAppointmentFollowup(text, currentState));
+    const missing = appointmentMissingFields(merged);
+    merged.missing_fields = missing.length ? missing : ["confirm"];
+    await saveSecretaryState(userId, merged);
+    return missing.length ? buildFollowupText(missing) : buildConfirmationText(merged);
+  }
+
   const intent = detectISecretaryIntent(text);
 
   if (intent === "today_tasks") {
@@ -458,19 +583,9 @@ async function handleISecretaryCommand(text, userId) {
       return buildFollowupText(parsed.missing_fields);
     }
 
-    const saved = await saveSecretaryRecord({
-      ...parsed,
-      user_id: userId,
-      raw_text: text,
-      priority: "NORMAL"
-    });
-
-    if (!saved.ok) {
-      return "บันทึกนัดหมายไม่สำเร็จค่ะ คุณสิงห์";
-    }
-
-    await clearSecretaryState(userId);
-    return buildSaveSuccessText(saved, parsed);
+    parsed.missing_fields = ["confirm"];
+    await saveSecretaryState(userId, { ...parsed, priority: "NORMAL" });
+    return buildConfirmationText(parsed);
   }
 
   // ข้อความทั่วไป = บันทึกโน้ตอย่างเดียว ไม่สร้าง TASKS
@@ -611,9 +726,28 @@ function buildFollowupText(missingFields) {
     location: "สถานที่"
   };
 
-  const lines = ["ไอซ์ขอข้อมูลเพิ่มอีกนิดค่ะ คุณสิงห์", ""];
-  missingFields.forEach(f => lines.push("- " + (map[f] || f)));
-  return lines.join("\n");
+  const field = missingFields[0];
+  const examples = {
+    date: "วันที่เท่าไรคะ? เช่น 24/08/69 หรือ พรุ่งนี้",
+    time: "กี่โมงคะ? เช่น 09:00 หรือ 9 โมง",
+    detail: "นัดทำอะไรคะ?",
+    location: "นัดที่ไหนคะ?"
+  };
+  return examples[field] || ("ขอ" + (map[field] || field) + "เพิ่มอีกนิดค่ะ");
+}
+
+function buildConfirmationText(parsed) {
+  return [
+    "ขอสรุปนัดหมายค่ะ",
+    "วันที่: " + parsed.date,
+    "เวลา: " + parsed.time,
+    "เรื่อง: " + parsed.detail,
+    parsed.location ? "สถานที่: " + parsed.location : "",
+    "",
+    "ถ้าถูกต้อง พิมพ์ “ยืนยัน”",
+    "หากต้องการแก้ พิมพ์วันที่หรือเวลาใหม่ได้เลย",
+    "หรือพิมพ์ “ยกเลิก”"
+  ].filter(Boolean).join("\n");
 }
 
 function buildSaveSuccessText(saved, parsed) {
